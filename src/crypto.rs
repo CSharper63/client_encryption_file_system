@@ -7,16 +7,23 @@ use chacha20poly1305::{
     AeadCore, ChaCha20Poly1305, KeyInit,
 };
 
+use crate::model::EncryptedAsset;
+
 // TODO verify that OSRng is a valid Crypto RNG
 
 pub type SymmKey = [u8; 32];
 
 /// Use to encrypt data using chacha20poly1305.
-pub fn encrypt(key: SymmKey, data: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+pub fn encrypt(key: SymmKey, data: Vec<u8>) -> EncryptedAsset {
     let cipher = ChaCha20Poly1305::new(&key.try_into().unwrap());
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
     let ciphertext = cipher.encrypt(&nonce, data.as_slice()).unwrap();
-    (ciphertext, nonce.to_vec())
+
+    let key = EncryptedAsset {
+        asset: ciphertext,
+        nonce: nonce.to_vec(),
+    };
+    key
 }
 
 /// Use to decrypt data using chacha20poly1305.
