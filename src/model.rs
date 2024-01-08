@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose, Engine as _};
 use rsa::{pkcs8, rand_core::OsRng, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -6,20 +5,26 @@ use crate::crypto::{self, SymmKey};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedAsset {
-    pub asset: Vec<u8>,
-    pub nonce: Vec<u8>,
+    #[serde(with = "base64")]
+    pub asset: Option<Vec<u8>>,
+    #[serde(with = "base64")]
+    pub nonce: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct User {
-    pub uid: String,
+    pub uid: Option<String>,
     pub username: String,
-    pub symmetric_key: Vec<u8>,
+    #[serde(with = "base64")]
+    pub symmetric_key: Option<Vec<u8>>,
     pub clear_salt: String,
-    pub master_key: Vec<u8>,
-    pub auth_key: Vec<u8>,
-    pub public_key: Vec<u8>,
-    pub private_key: Vec<u8>,
+    pub master_key: EncryptedAsset,
+    #[serde(with = "base64")]
+    pub auth_key: Option<Vec<u8>>,
+    #[serde(with = "base64")]
+    pub public_key: Option<Vec<u8>>,
+
+    pub private_key: EncryptedAsset,
 }
 
 impl User {
@@ -31,7 +36,7 @@ impl User {
         let master_key = crypto::generate_master_key();
 
         // user kdf to derive auth and symm key
-        let (auth_key, symm_key) = crypto::kdf(hash);
+        let (auth_key, symm_key) = crypto::kdf(hash.try_into().unwrap());
 
         // asymm crypto -> generate public and private keys
         let mut rng = OsRng;
@@ -48,42 +53,74 @@ impl User {
             .to_vec();
 
         User {
-            uid: "".to_string(),
+            uid: None,
             username: username.to_string(),
-            symmetric_key: symm_key.to_vec(),
+            symmetric_key: Some(symm_key),
             clear_salt: salt,
-            master_key: master_key.to_vec(),
-            auth_key: auth_key.to_vec(),
-            public_key: public_key_bytes,
-            private_key: private_key_bytes,
+            master_key: EncryptedAsset {
+                asset: Some(master_key),
+                nonce: None,
+            },
+            auth_key: Some(auth_key),
+            public_key: Some(public_key_bytes),
+            private_key: EncryptedAsset {
+                asset: Some(private_key_bytes),
+                nonce: None,
+            },
         }
     }
 
-    pub fn encrypt_n_convert_to_b64(self) -> EncryptedB64User {
-        // encrypt the master and asymm private keys using symmetric key
-        let encrypted_master_key = crypto::encrypt(
-            self.symmetric_key.clone().try_into().unwrap(),
-            self.master_key,
-        );
-        let encrypted_private_key = crypto::encrypt(
-            self.symmetric_key.clone().try_into().unwrap(),
-            self.private_key,
-        );
+    pub fn encrypt(self) -> User {
+        let symmetric_key = self.symmetric_key.clone().unwrap();
 
-        EncryptedB64User {
+        // encrypt the master and asymm private keys using symmetric key
+        let encrypted_master_key =
+            crypto::encrypt(symmetric_key.clone(), self.master_key.asset.unwrap());
+        let encrypted_private_key =
+            crypto::encrypt(symmetric_key.clone(), self.private_key.asset.unwrap());
+
+        // this use is encrypted
+        User {
             uid: self.uid,
+            symmetric_key: None,
             username: self.username,
             clear_salt: self.clear_salt,
-            encrypted_master_key: EncryptedAssetB64 {
-                asset: general_purpose::STANDARD.encode(encrypted_master_key.asset),
-                nonce: general_purpose::STANDARD.encode(encrypted_master_key.nonce),
+            master_key: EncryptedAsset {
+                asset: encrypted_master_key.asset,
+                nonce: encrypted_master_key.nonce,
             },
-            auth_key: general_purpose::STANDARD.encode(&self.auth_key),
-            public_key: general_purpose::STANDARD.encode(&self.public_key),
-            encrypted_private_key: EncryptedAssetB64 {
-                asset: general_purpose::STANDARD.encode(encrypted_private_key.asset),
-                nonce: general_purpose::STANDARD.encode(encrypted_private_key.nonce),
+            auth_key: self.auth_key,
+            public_key: self.public_key,
+            private_key: EncryptedAsset {
+                asset: encrypted_private_key.asset,
+                nonce: encrypted_private_key.nonce,
             },
+        }
+    }
+}
+
+mod base64 {
+    use base64::engine::general_purpose;
+    use base64::Engine as _;
+    use serde::{Deserialize, Serialize};
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        let base64 = match v {
+            Some(v) => Some(general_purpose::STANDARD.encode(v)),
+            None => None,
+        };
+        <Option<String>>::serialize(&base64, s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let base64 = <Option<String>>::deserialize(d)?;
+        match base64 {
+            Some(v) => general_purpose::STANDARD
+                .decode(v.as_bytes())
+                .map(|v| Some(v))
+                .map_err(|e| serde::de::Error::custom(e)),
+            None => Ok(None),
         }
     }
 }
@@ -104,40 +141,4 @@ pub struct FileEntity {
     pub encrypted_name: EncryptedAsset,
     pub encrypted_key: EncryptedAsset,
     pub encrypted_content: EncryptedAsset,
-}
-
-// ================= Use to send data encoded in b64 to the API ============================
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EncryptedAssetB64 {
-    pub asset: String,
-    pub nonce: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct EncryptedB64User {
-    pub uid: String,
-    pub username: String,
-    pub clear_salt: String,
-    pub encrypted_master_key: EncryptedAssetB64,
-    pub auth_key: String,
-    pub public_key: String,
-    pub encrypted_private_key: EncryptedAssetB64,
-}
-
-// =============== Use to send file/dir to the api
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EncryptedFileB64 {
-    pub path: String,
-    pub encrypted_name: EncryptedAssetB64,
-    pub encrypted_key: EncryptedAssetB64,
-    pub encrypted_content: EncryptedAssetB64,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct EncryptedDirB64 {
-    pub path: String,
-    pub encrypted_name: EncryptedAssetB64,
-    pub encrypted_key: EncryptedAssetB64,
-    pub files: Vec<EncryptedFileB64>,
-    pub dirs: Vec<EncryptedDirB64>,
 }
