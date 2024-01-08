@@ -8,14 +8,14 @@ pub async fn sign_up(username: &str, password: &str) {
     // create the user -> contains secret content
     let new_plain_user = User::generate(username, password);
 
-    // encrypt the user with the symm key and convert the struct to a b64 struct
-    let ciphered64_user = new_plain_user.encrypt_n_convert_to_b64();
+    // encrypt
+    let serialized_ciphered64_user = serde_json::to_string(&new_plain_user.encrypt()).unwrap();
 
     let client = Client::new();
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
-        .json(&ciphered64_user)
+        .json(&serialized_ciphered64_user)
         .send()
         .await
     {
