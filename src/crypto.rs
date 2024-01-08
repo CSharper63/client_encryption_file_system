@@ -7,48 +7,86 @@ use chacha20poly1305::{
     AeadCore, ChaCha20Poly1305, KeyInit,
 };
 
-use crate::model::EncryptedAsset;
+use crate::model::{DataAsset, DataStatus};
 
 // TODO verify that OSRng is a valid Crypto RNG
 
 pub type SymmKey = [u8; 32];
 
 /// Use to encrypt data using chacha20poly1305.
-pub fn encrypt(key: Vec<u8>, data: Vec<u8>) -> EncryptedAsset {
-    let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
-    let ciphertext = cipher.encrypt(&nonce, data.as_slice()).unwrap();
+pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>) -> DataAsset {
+    match data {
+        Some(data) => {
+            let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
+            let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
+            let ciphertext = cipher.encrypt(&nonce, data.as_slice()).unwrap();
 
-    let key = EncryptedAsset {
-        asset: Some(ciphertext),
-        nonce: Some(nonce.to_vec()),
-    };
-    key
+            let key = DataAsset {
+                asset: Some(ciphertext),
+                nonce: Some(nonce.to_vec()),
+                status: Some(DataStatus::Encrypted),
+            };
+            key
+        }
+        None => DataAsset {
+            asset: None,
+            nonce: None,
+            status: None,
+        },
+    }
 }
 
 /// Use to decrypt data using chacha20poly1305.
-pub fn decrypt(key: Vec<u8>, nonce: Vec<u8>, data: Vec<u8>) -> Vec<u8> {
-    let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
+pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> Option<Vec<u8>> {
+    let nonce_set: bool;
+    // verify if nonce is present
+    match nonce {
+        Some(_) => nonce_set = true,
+        None => nonce_set = false,
+    }
 
-    let plaintext = cipher
-        .decrypt(GenericArray::from_slice(&nonce), data.as_slice())
-        .unwrap();
-    plaintext
+    // init decryption only if nonce is set
+    if nonce_set {
+        match data {
+            Some(data) => {
+                let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
+
+                let plaintext = cipher
+                    .decrypt(GenericArray::from_slice(&nonce.unwrap()), data.as_slice())
+                    .unwrap();
+                return Some(plaintext);
+            }
+            None => {
+                return None;
+            }
+        }
+    } else {
+        return None;
+    }
 }
 
 /// Use to generate symmetric key, this key will be used to encrypt the vault user master key.
-pub fn hash_password(plain_password: &str) -> (Vec<u8>, String) {
-    let salt = SaltString::generate(&mut OsRng);
+pub fn hash_password(plain_password: &str, salt: Option<SaltString>) -> (Vec<u8>, String) {
+    let salt_2_process: SaltString;
+    match salt {
+        Some(salt_user) => {
+            salt_2_process = salt_user;
+        }
+        None => {
+            salt_2_process = SaltString::generate(&mut OsRng);
+        }
+    };
+
     let mut hashed_password = [0u8; 32]; // Can be any desired size
     Argon2::default() // TODO change Argon2id params
         .hash_password_into(
             plain_password.as_bytes(),
-            salt.as_str().as_bytes(),
+            salt_2_process.as_str().as_bytes(),
             &mut hashed_password,
         )
         .unwrap();
 
-    (hashed_password.to_vec(), salt.to_string())
+    (hashed_password.to_vec(), salt_2_process.to_string())
 }
 
 /// Use to generate the master key, this key will be used to encrypt all the entity keys such as file/dir keys.
