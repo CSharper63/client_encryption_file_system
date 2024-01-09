@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::{self};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FsTree {
+    dirs: Option<Vec<DirEntity>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum DataStatus {
     // allow to know if the current processed data are encrypted or not
     Encrypted,
@@ -92,8 +97,16 @@ impl User {
         let symmetric_key = self.symmetric_key.clone();
 
         // encrypt the master and asymm private keys using symmetric key
-        let encrypted_master_key = crypto::encrypt(symmetric_key.clone(), self.master_key.asset);
-        let encrypted_private_key = crypto::encrypt(symmetric_key.clone(), self.private_key.asset);
+        let encrypted_master_key = crypto::encrypt(
+            symmetric_key.clone(),
+            self.master_key.asset,
+            self.master_key.nonce,
+        );
+        let encrypted_private_key = crypto::encrypt(
+            symmetric_key.clone(),
+            self.private_key.asset,
+            self.private_key.nonce,
+        );
 
         // this use is encrypted
         User {
@@ -205,8 +218,9 @@ impl DirEntity {
 
     // symm key used is the parent dir key
     pub fn encrypt(self, symm_key: Vec<u8>) -> DirEntity {
-        let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset);
-        let encrypted_dir_key = crypto::encrypt(symm_key, self.key.asset);
+        // if the dir has already been encrypted a time, use the nonce to reencrypt
+        let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
+        let encrypted_dir_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
 
         DirEntity {
             path: self.path,
@@ -288,9 +302,10 @@ impl FileEntity {
 
     pub fn encrypt(self, symm_key: Vec<u8>) -> FileEntity {
         // Todo handle while
-        let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset);
-        let encrypted_content = crypto::encrypt(symm_key.clone(), self.content.asset);
-        let encrypted_file_key = crypto::encrypt(symm_key, self.key.asset);
+        let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
+        let encrypted_content =
+            crypto::encrypt(symm_key.clone(), self.content.asset, self.content.nonce);
+        let encrypted_file_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
 
         FileEntity {
             path: self.path,
