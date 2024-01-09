@@ -3,8 +3,8 @@ use argon2::{
     Argon2,
 };
 use chacha20poly1305::{
-    aead::{generic_array::GenericArray, Aead, OsRng},
-    AeadCore, ChaCha20Poly1305, KeyInit,
+    aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
+    XChaCha20Poly1305,
 };
 
 use crate::model::{DataAsset, DataStatus};
@@ -13,17 +13,26 @@ use crate::model::{DataAsset, DataStatus};
 
 pub type SymmKey = [u8; 32];
 
-/// Use to encrypt data using chacha20poly1305.
-pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>) -> DataAsset {
+/// Use to encrypt data using extended chacha20poly1305.
+pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> DataAsset {
     match data {
         Some(data) => {
-            let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
-            let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
-            let ciphertext = cipher.encrypt(&nonce, data.as_slice()).unwrap();
+            let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
+
+            // in case of we want to re-encrypt an existing file
+            let nonce_2_use =
+                nonce.unwrap_or(XChaCha20Poly1305::generate_nonce(&mut OsRng).to_vec());
+
+            let ciphertext = cipher
+                .encrypt(
+                    GenericArray::from_slice(nonce_2_use.as_slice()),
+                    data.as_slice(),
+                )
+                .unwrap();
 
             let key = DataAsset {
                 asset: Some(ciphertext),
-                nonce: Some(nonce.to_vec()),
+                nonce: Some(nonce_2_use),
                 status: Some(DataStatus::Encrypted),
             };
             key
@@ -49,7 +58,7 @@ pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> O
     if nonce_set {
         match data {
             Some(data) => {
-                let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key));
+                let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
 
                 let plaintext = cipher
                     .decrypt(GenericArray::from_slice(&nonce.unwrap()), data.as_slice())
