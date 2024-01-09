@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::{self};
 
+fn add_to_path(name: &str) -> String {
+    format!("/{}", name)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FsTree {
     dirs: Option<Vec<DirEntity>>,
@@ -21,9 +25,9 @@ pub enum DataStatus {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DataAsset {
     // can contain encrypted/decrypted data
-    #[serde(with = "base64")]
+    #[serde(with = "base58")]
     pub asset: Option<Vec<u8>>,
-    #[serde(with = "base64")]
+    #[serde(with = "base58")]
     pub nonce: Option<Vec<u8>>,
     #[serde(skip_serializing)]
     pub status: Option<DataStatus>,
@@ -37,9 +41,9 @@ pub struct User {
     pub symmetric_key: Vec<u8>,
     pub clear_salt: String,
     pub master_key: DataAsset,
-    #[serde(with = "base64")]
+    #[serde(with = "base58")]
     pub auth_key: Option<Vec<u8>>,
-    #[serde(with = "base64")]
+    #[serde(with = "base58")]
     pub public_key: Option<Vec<u8>>,
     pub private_key: DataAsset,
     pub shared_to_others: Option<HashMap<String, String>>,
@@ -200,7 +204,7 @@ impl DirEntity {
     pub fn create(name: &str, path: &str) -> DirEntity {
         let dir_key = crypto::generate_master_key();
         DirEntity {
-            path: path.to_string(),
+            path: path.to_string() + &add_to_path(name),
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
                 nonce: None,
@@ -281,7 +285,7 @@ impl FileEntity {
     pub fn create(name: &str, content: Vec<u8>, path: &str) -> FileEntity {
         let file_key = crypto::generate_master_key();
         FileEntity {
-            path: path.to_string(), // parent path
+            path: path.to_string() + &add_to_path(name), // parent path
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
                 nonce: None,
@@ -347,25 +351,24 @@ impl FileEntity {
     }
 }
 
-mod base64 {
-    use base64::engine::general_purpose;
-    use base64::Engine as _;
+mod base58 {
+
     use serde::{Deserialize, Serialize};
     use serde::{Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
-        let base64 = match v {
-            Some(v) => Some(general_purpose::STANDARD.encode(v)),
+        let base58 = match v {
+            Some(v) => Some(bs58::encode(v).into_string()),
             None => None,
         };
-        <Option<String>>::serialize(&base64, s)
+        <Option<String>>::serialize(&base58, s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
-        let base64 = <Option<String>>::deserialize(d)?;
-        match base64 {
-            Some(v) => general_purpose::STANDARD
-                .decode(v.as_bytes())
+        let base58 = <Option<String>>::deserialize(d)?;
+        match base58 {
+            Some(v) => bs58::decode(v.as_bytes())
+                .into_vec()
                 .map(|v| Some(v))
                 .map_err(|e| serde::de::Error::custom(e)),
             None => Ok(None),
