@@ -6,12 +6,11 @@ use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
     XChaCha20Poly1305,
 };
+use rsa::{pkcs8, RsaPrivateKey, RsaPublicKey};
 
 use crate::model::{DataAsset, DataStatus};
 
 // TODO verify that OSRng is a valid Crypto RNG
-
-pub type SymmKey = [u8; 32];
 
 /// Use to encrypt data using extended chacha20poly1305.
 pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> DataAsset {
@@ -123,4 +122,22 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
         .unwrap();
 
     (auth_key.to_vec(), symmetric_key.to_vec())
+}
+
+/// Use to generate asymmetric public/private keys-pair using RSA-OAEP 4096
+pub fn generate_asymm_keys() -> (Vec<u8>, Vec<u8>) {
+    let mut rng = OsRng;
+    let bits = 4096;
+    let priv_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
+    let private_key_bytes = pkcs8::EncodePrivateKey::to_pkcs8_der(&priv_key)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    let pub_key = RsaPublicKey::from(&priv_key);
+    let public_key_bytes = pkcs8::EncodePublicKey::to_public_key_der(&pub_key)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+
+    (private_key_bytes, public_key_bytes)
 }

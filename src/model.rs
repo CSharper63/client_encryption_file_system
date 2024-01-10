@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
-use rsa::{pkcs8, rand_core::OsRng, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, NoneAsEmptyString};
+use std::collections::HashMap;
 
 use crate::crypto::{self};
 
@@ -65,18 +63,7 @@ impl User {
         let (auth_key, symm_key) = crypto::kdf(hash);
 
         // asymm crypto -> generate public and private keys
-        let mut rng = OsRng;
-        let bits = 4096;
-        let priv_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
-        let private_key_bytes = pkcs8::EncodePrivateKey::to_pkcs8_der(&priv_key)
-            .unwrap()
-            .as_bytes()
-            .to_vec();
-        let pub_key = RsaPublicKey::from(&priv_key);
-        let public_key_bytes = pkcs8::EncodePublicKey::to_public_key_der(&pub_key)
-            .unwrap()
-            .as_bytes()
-            .to_vec();
+        let (private_key, public_key) = crypto::generate_asymm_keys();
 
         User {
             uid: None,
@@ -89,9 +76,9 @@ impl User {
                 status: Some(DataStatus::Decrypted),
             },
             auth_key: Some(auth_key),
-            public_key: Some(public_key_bytes),
+            public_key: Some(public_key),
             private_key: DataAsset {
-                asset: Some(private_key_bytes),
+                asset: Some(private_key),
                 nonce: None,
                 status: Some(DataStatus::Decrypted),
             },
