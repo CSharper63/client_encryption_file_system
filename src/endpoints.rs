@@ -5,33 +5,41 @@ use crate::model::{DataAsset, FileEntity, FsTree, User};
 static URL: &str = "http://localhost:8000";
 
 // Todo get back the created user with jwt
-pub async fn sign_up(username: &str, password: &str) {
+pub async fn sign_up(username: &str, password: &str) -> (Option<String>, Option<User>) {
     // create the user -> contains secret content
     let new_plain_user = User::generate(username, password);
-
-    // encrypt
-    let serialized_ciphered64_user = serde_json::to_string(&new_plain_user.encrypt()).unwrap();
 
     let client = Client::new();
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
-        .json(&serialized_ciphered64_user)
+        .json(&new_plain_user.clone().encrypt())
         .send()
         .await
     {
         Ok(res) => match res.status() {
-            // TODO must handle jwt
-            StatusCode::CREATED => println!("User successfully created"),
-            _ => println!(
-                "Error : {}",
-                match res.text().await {
-                    Ok(t) => t,
-                    Err(e) => e.to_string(),
-                }
-            ),
+            StatusCode::CREATED => {
+                println!("I went there");
+
+                let jwt = res.text().await.unwrap();
+
+                (Some(jwt), Some(new_plain_user))
+            }
+            _ => {
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                (None, None)
+            }
         },
-        Err(e) => println!("Error : {}", e.to_string()),
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            (None, None)
+        }
     }
 }
 
@@ -41,7 +49,7 @@ pub async fn get_my_tree(auth_token: &str) -> Option<FsTree> {
 
     match client
         .get(format!(
-            "{}/get_my_tree?token={}",
+            "{}/get_my_tree?auth_token={}",
             URL.to_string(),
             auth_token
         ))
