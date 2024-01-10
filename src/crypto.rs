@@ -75,14 +75,17 @@ pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> O
 }
 
 /// Use to generate symmetric key, this key will be used to encrypt the vault user master key.
-pub fn hash_password(plain_password: &str, salt: Option<SaltString>) -> (Vec<u8>, String) {
-    let salt_2_process: SaltString;
+pub fn hash_password(plain_password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
+    let salt_2_process: Vec<u8>;
     match salt {
         Some(salt_user) => {
             salt_2_process = salt_user;
         }
         None => {
-            salt_2_process = SaltString::generate(&mut OsRng);
+            salt_2_process = SaltString::generate(&mut OsRng)
+                .to_string()
+                .as_bytes()
+                .to_vec();
         }
     };
 
@@ -90,12 +93,12 @@ pub fn hash_password(plain_password: &str, salt: Option<SaltString>) -> (Vec<u8>
     Argon2::default() // TODO change Argon2id params
         .hash_password_into(
             plain_password.as_bytes(),
-            salt_2_process.as_str().as_bytes(),
+            salt_2_process.as_slice(),
             &mut hashed_password,
         )
         .unwrap();
 
-    (hashed_password.to_vec(), salt_2_process.to_string())
+    (hashed_password.to_vec(), salt_2_process.to_vec())
 }
 
 /// Use to generate the master key, this key will be used to encrypt all the entity keys such as file/dir keys.
@@ -112,11 +115,11 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
 
     // compute auth key
     Argon2::default()
-        .hash_password_into(&key_material, b"0", &mut auth_key)
+        .hash_password_into(&key_material, b"PI6KXZtYonAI8dc9", &mut auth_key)
         .unwrap();
     // compute symmetric key
     Argon2::default()
-        .hash_password_into(&key_material, b"1", &mut symmetric_key)
+        .hash_password_into(&key_material, b"OG08sRT3j1e0wH5m", &mut symmetric_key)
         .unwrap();
 
     (auth_key.to_vec(), symmetric_key.to_vec())
