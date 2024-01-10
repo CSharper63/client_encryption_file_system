@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use argon2::password_hash::SaltString;
 use rsa::{pkcs8, rand_core::OsRng, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, NoneAsEmptyString};
 
 use crate::crypto::{self};
 
@@ -33,13 +33,16 @@ pub struct DataAsset {
     pub status: Option<DataStatus>,
 }
 
+#[serde_as]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct User {
+    #[serde_as(as = "NoneAsEmptyString")]
     pub uid: Option<String>,
     pub username: String,
     #[serde(skip_serializing)] // never send the symm key to the server
     pub symmetric_key: Vec<u8>,
-    pub clear_salt: String,
+    #[serde(with = "base58")]
+    pub clear_salt: Option<Vec<u8>>,
     pub master_key: DataAsset,
     #[serde(with = "base58")]
     pub auth_key: Option<Vec<u8>>,
@@ -79,7 +82,7 @@ impl User {
             uid: None,
             username: username.to_string(),
             symmetric_key: symm_key,
-            clear_salt: salt,
+            clear_salt: Some(salt),
             master_key: DataAsset {
                 asset: Some(master_key),
                 nonce: None,
@@ -115,7 +118,7 @@ impl User {
         // this use is encrypted
         User {
             uid: self.uid,
-            symmetric_key: symmetric_key,
+            symmetric_key,
             username: self.username,
             clear_salt: self.clear_salt,
             master_key: DataAsset {
@@ -137,10 +140,8 @@ impl User {
 
     pub fn decrypt(self, password: &str) -> User {
         // use the fetched salt to generate password hash
-        let (password_hash, _) = crypto::hash_password(
-            password,
-            Some(SaltString::from_b64(&self.clear_salt).unwrap()),
-        );
+        let (password_hash, _) =
+            crypto::hash_password(password, Some(self.clear_salt.clone().unwrap()));
 
         // retrieve user symm key using kdf from the password hash
         let (_, user_symm_key) = crypto::kdf(password_hash.try_into().unwrap_or_default());
