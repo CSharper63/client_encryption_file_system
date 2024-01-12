@@ -8,9 +8,18 @@ fn add_to_path(name: &str) -> String {
     format!("/{}", name)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FsTree {
-    dirs: Option<Vec<DirEntity>>,
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RootTree {
+    #[serde(default)]
+    pub dirs: Option<Vec<DirEntity>>,
+    #[serde(default)]
+    pub files: Option<Vec<FileEntity>>,
+}
+
+impl RootTree {
+    pub fn to_string(&self) -> String {
+        serde_json::to_string(&self).unwrap_or(String::from("Unable to show the tree"))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -31,13 +40,31 @@ pub struct DataAsset {
     pub status: Option<DataStatus>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FileEntity {
+    pub path: String,
+    pub name: DataAsset,
+    pub key: DataAsset,
+    pub content: DataAsset,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct DirEntity {
+    // must be sent to the client while logged in
+    pub path: String, // parent path where the dir is stored
+    pub name: DataAsset,
+    pub key: DataAsset,
+    pub files: Option<Vec<FileEntity>>,
+    pub sub_dirs: Option<Vec<DirEntity>>,
+}
+
 #[serde_as]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct User {
     #[serde_as(as = "NoneAsEmptyString")]
     pub uid: Option<String>,
     pub username: String,
-    #[serde(skip_serializing)] // never send the symm key to the server
+    #[serde(skip_serializing, default)] // never send the symm key to the server
     pub symmetric_key: Vec<u8>,
     #[serde(with = "base58")]
     pub clear_salt: Option<Vec<u8>>,
@@ -62,6 +89,7 @@ impl User {
         // user kdf to derive auth and symm key
         let (auth_key, symm_key) = crypto::kdf(hash);
 
+        // TODO handle if already created
         // asymm crypto -> generate public and private keys
         let (private_key, public_key) = crypto::generate_asymm_keys();
 
@@ -87,7 +115,20 @@ impl User {
         }
     }
 
+    /// Use to rebuild symmetric and auth key from the password and the salt obtained by the api
+    pub fn rebuild_secret(password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
+        // generate the hash from password, give the hash and the salt
+        let (hash, _) = crypto::hash_password(password, salt);
+
+        // user kdf to derive auth and symm key
+        let (auth_key, symm_key) = crypto::kdf(hash);
+
+        (auth_key, symm_key)
+    }
+
     pub fn encrypt(self) -> User {
+        println!("Before encryption: {}", self.to_string());
+
         let symmetric_key = self.symmetric_key.clone();
 
         // encrypt the master and asymm private keys using symmetric key
@@ -96,11 +137,15 @@ impl User {
             self.master_key.asset,
             self.master_key.nonce,
         );
+        println!("Master key has been encrypted");
+
+        // TODO must be encrypted with the master key and NOT THE SYMMETRIC KEY, EXPECTED TO CHANGE IN THE FUTURE
         let encrypted_private_key = crypto::encrypt(
             symmetric_key.clone(),
             self.private_key.asset,
             self.private_key.nonce,
         );
+        println!("Private key has been encrypted");
 
         // this use is encrypted
         User {
@@ -125,10 +170,9 @@ impl User {
         }
     }
 
-    pub fn decrypt(self, password: &str) -> User {
+    pub fn decrypt(self, password: &str, salt: Option<Vec<u8>>) -> User {
         // use the fetched salt to generate password hash
-        let (password_hash, _) =
-            crypto::hash_password(password, Some(self.clear_salt.clone().unwrap()));
+        let (password_hash, _) = crypto::hash_password(password, salt.clone());
 
         // retrieve user symm key using kdf from the password hash
         let (_, user_symm_key) = crypto::kdf(password_hash.try_into().unwrap_or_default());
@@ -136,7 +180,7 @@ impl User {
         // decrypt the master key using user symm key
         let user_master_key = crypto::decrypt(
             user_symm_key.clone(),
-            self.master_key.nonce,
+            self.master_key.nonce.clone(),
             self.master_key.asset,
         )
         .unwrap();
@@ -144,7 +188,7 @@ impl User {
         // decrypt the private asymm key using user symm key
         let user_private_key = crypto::decrypt(
             user_symm_key.clone(),
-            self.private_key.nonce,
+            self.private_key.nonce.clone(),
             self.private_key.asset,
         )
         .unwrap();
@@ -153,46 +197,45 @@ impl User {
             uid: self.uid,
             username: self.username,
             symmetric_key: user_symm_key.clone(), // decrypted
-            clear_salt: self.clear_salt,
+            clear_salt: salt,
             auth_key: self.auth_key, // decrypted
             master_key: DataAsset {
                 asset: Some(user_master_key), // decrypted
-                nonce: None, // we don't need it anymore as soon as we fetch and decrypted the content from the api
+                nonce: self.master_key.nonce, // we don't need it anymore as soon as we fetch and decrypted the content from the api
                 status: Some(DataStatus::Decrypted),
             },
             public_key: self.public_key,
             private_key: DataAsset {
                 asset: Some(user_private_key), // decrypted
-                nonce: None,
+                nonce: self.private_key.nonce.clone(),
                 status: Some(DataStatus::Decrypted),
             },
             shared_to_me: Some(HashMap::new()),
             shared_to_others: Some(HashMap::new()),
         }
     }
-}
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct DirEntity {
-    // must be sent to the client while logged in
-    pub path: String,
-    pub name: DataAsset,
-    pub key: DataAsset,
-    pub files: Option<Vec<FileEntity>>,
-    pub dirs: Option<Vec<DirEntity>>,
+    pub fn to_string(&self) -> String {
+        // !!! The output contains secret key materials
+        serde_json::to_string_pretty(&self).unwrap_or(String::from("Unable to display the user"))
+    }
 }
 
 impl DirEntity {
-    // the path is formed with base58 encoded encrypted name
-
-    //TODO create()
-    // path refers of the server tree
+    // Ajoute un DirEntity au vector sub_dirs
+    pub fn add_sub_dir(&mut self, sub_dir: DirEntity) {
+        if let Some(sub_dirs) = &mut self.sub_dirs {
+            sub_dirs.push(sub_dir);
+        } else {
+            self.sub_dirs = Some(vec![sub_dir]);
+        }
+    }
 
     // Before all must provide the current
     pub fn create(name: &str, path: &str) -> DirEntity {
         let dir_key = crypto::generate_master_key();
         DirEntity {
-            path: path.to_string() + &add_to_path(name),
+            path: path.to_string(),
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
                 nonce: None,
@@ -204,7 +247,7 @@ impl DirEntity {
                 status: Some(DataStatus::Decrypted),
             },
             files: None,
-            dirs: None,
+            sub_dirs: None,
         }
     }
 
@@ -214,15 +257,24 @@ impl DirEntity {
         let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
         let encrypted_dir_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
 
+        // encode the encrypted name in base58 to add it to the path
+        // TODO must be done in decryption
+        /* let base58_name_for_path =
+        bs58::encode(encrypted_name.clone().asset.unwrap()).into_string(); */
+
+        // TODO must be encrypted in cascade
+
         DirEntity {
-            path: self.path,
+            path: self.path, /* + &add_to_path(&base58_name_for_path) */
+            // only add the encrypted file name when encrypt the name before send it to the api
             name: encrypted_name,
             key: encrypted_dir_key,
             files: self.files,
-            dirs: self.dirs,
+            sub_dirs: self.sub_dirs,
         }
     }
 
+    // happends when fetching tree from api so must be decrypted
     pub fn decrypt(self, symm_key: Vec<u8>) -> DirEntity {
         let decrypted_name =
             crypto::decrypt(symm_key.clone(), self.name.nonce.clone(), self.name.asset).unwrap();
@@ -237,7 +289,7 @@ impl DirEntity {
                 .collect()
         });
 
-        let decrypted_dirs = self.dirs.as_ref().map(|dirs| {
+        let decrypted_dirs = self.sub_dirs.as_ref().map(|dirs| {
             dirs.iter()
                 .map(|dir| dir.clone().decrypt(symm_key.clone()))
                 .collect()
@@ -256,24 +308,48 @@ impl DirEntity {
                 status: Some(DataStatus::Decrypted),
             },
             files: decrypted_files,
-            dirs: decrypted_dirs,
+            sub_dirs: decrypted_dirs,
         }
     }
-}
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct FileEntity {
-    pub path: String,
-    pub name: DataAsset,
-    pub key: DataAsset,
-    pub content: DataAsset,
+    /// Display all the sub folder
+    pub fn show_sub_dirs(&self) {
+        let mut count: u32 = 1;
+        for dir in &self.sub_dirs.clone().unwrap() {
+            println!(
+                "{}.{}",
+                count,
+                String::from_utf8_lossy(dir.name.asset.as_ref().unwrap())
+            );
+            count = count + 1;
+        }
+    }
+
+    /// Display all files
+    pub fn show_files(&self) {
+        let mut count: u32 = 1;
+        for file in &self.files.clone().unwrap() {
+            println!(
+                "{}.{}",
+                count,
+                String::from_utf8_lossy(file.name.asset.as_ref().unwrap())
+            );
+            count = count + 1;
+        }
+    }
+
+    /// Display name as string
+    pub fn show_name(&self) -> String {
+        String::from_utf8_lossy(&self.name.asset.as_ref().unwrap()).to_string()
+    }
 }
 
 impl FileEntity {
     pub fn create(name: &str, content: Vec<u8>, path: &str) -> FileEntity {
         let file_key = crypto::generate_master_key();
         FileEntity {
-            path: path.to_string() + &add_to_path(name), // parent path
+            path: path.to_string(), /*  + &add_to_path(name) */
+            // parent path
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
                 nonce: None,
