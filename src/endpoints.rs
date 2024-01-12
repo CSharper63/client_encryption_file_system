@@ -1,15 +1,15 @@
 use reqwest::{Client, StatusCode};
 
-use crate::model::{DataAsset, FileEntity, FsTree, User};
+use crate::model::{DataAsset, DirEntity, FileEntity, RootTree, User};
 
 static URL: &str = "http://localhost:8000";
 
 // Todo get back the created user with jwt
-pub async fn sign_up(username: &str, password: &str) -> (Option<String>, Option<User>) {
+pub async fn sign_up(username: &str, password: &str) -> Option<String> {
+    let client = Client::new();
+
     // create the user -> contains secret content
     let new_plain_user = User::generate(username, password);
-
-    let client = Client::new();
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
@@ -23,7 +23,7 @@ pub async fn sign_up(username: &str, password: &str) -> (Option<String>, Option<
 
                 let jwt = res.text().await.unwrap();
 
-                (Some(jwt), Some(new_plain_user))
+                Some(jwt)
             }
             _ => {
                 println!(
@@ -33,18 +33,96 @@ pub async fn sign_up(username: &str, password: &str) -> (Option<String>, Option<
                         Err(e) => e.to_string(),
                     }
                 );
-                (None, None)
+                None
             }
         },
         Err(e) => {
             println!("Error : {}", e.to_string());
-            (None, None)
+            None
+        }
+    }
+}
+
+pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
+    let client = Client::new();
+    println!("username to process: {}", username);
+    match client
+        .get(format!(
+            "{}/get_sign_in?username={}&auth_key={}",
+            URL.to_string(),
+            username,
+            bs58::encode(auth_key).into_string()
+        ))
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                let jwt = res.text().await.unwrap();
+
+                Some(jwt)
+            }
+            _ => {
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
+pub async fn get_user(auth_token: &str) -> Option<User> {
+    let client = Client::new();
+    match client
+        .get(format!(
+            "{}/get_user?auth_token={}",
+            URL.to_string(),
+            auth_token,
+        ))
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                let expected_user: User =
+                    match serde_json::from_str(res.text().await.unwrap().as_str()) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            println!("Error while fetching user : {}", e.to_string());
+                            return None;
+                        }
+                    };
+                Some(expected_user)
+            }
+            _ => {
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
         }
     }
 }
 
 /// Use to fetch encrypted tree metadata of the user
-pub async fn get_my_tree(auth_token: &str) -> Option<FsTree> {
+pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
     let client = Client::new();
 
     match client
@@ -58,7 +136,7 @@ pub async fn get_my_tree(auth_token: &str) -> Option<FsTree> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
-                let my_tree: FsTree =
+                let my_tree: RootTree =
                     serde_json::from_str(res.text().await.unwrap().as_str()).unwrap();
                 Some(my_tree)
             }
@@ -124,15 +202,14 @@ pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option
     }
 }
 
-pub async fn get_salt(auth_key: &str, username: &str) -> Option<String> {
+pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     let client = Client::new();
 
     match client
         .get(format!(
-            "{}/auth/get_salt?username={}?auth_key={}",
+            "{}/auth/get_salt?username={}",
             URL.to_string(),
             username,
-            auth_key
         ))
         .send()
         .await
@@ -140,7 +217,9 @@ pub async fn get_salt(auth_key: &str, username: &str) -> Option<String> {
         Ok(res) => match res.status() {
             StatusCode::OK => {
                 let clear_salt = res.text().await.unwrap();
-                return Some(clear_salt);
+                let salt = bs58::decode(clear_salt).into_vec();
+
+                return Some(salt.unwrap());
             }
             _ => {
                 // any other ->
@@ -249,6 +328,7 @@ pub async fn share_entity(
 /// The path set must be encrypted
 pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<String> {
     let client = Client::new();
+
     let serialised_file = serde_json::to_string(&new_file).unwrap();
     match client
         .get(format!(
@@ -283,4 +363,47 @@ pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<Strin
     }
 }
 
-pub fn create_dir(path: &str) {}
+pub async fn create_dir(
+    auth_token: &str,
+    name: &str,
+    current_path: &str,
+    key_2_encrypt_dir: Vec<u8>,
+) -> Option<String> {
+    let client = Client::new();
+
+    let new_folder = DirEntity::create(name, current_path);
+
+    let ciphered_dir = new_folder.encrypt(key_2_encrypt_dir);
+
+    match client
+        .post(format!(
+            "{}/dir/create?auth_token={}",
+            URL.to_string(),
+            auth_token,
+        ))
+        .json(&ciphered_dir)
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                return Some(res.text().await.unwrap());
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
