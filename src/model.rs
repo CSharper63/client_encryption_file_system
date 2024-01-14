@@ -11,25 +11,30 @@ fn add_to_path(name: &str) -> String {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RootTree {
     #[serde(default)]
-    pub dirs: Option<Vec<DirEntity>>,
+    pub dirs: Option<Vec<DirEntity>>, // all sub folders
+    // toto -> DirEntity -> ref sur toto &DirEntity
+    // |
+    //  ---- Tete
+    // titi
+    // tata
     #[serde(default)]
-    pub files: Option<Vec<FileEntity>>,
+    pub files: Option<Vec<FileEntity>>, // all root files
 }
 
 impl RootTree {
     pub fn to_string(&self) -> String {
-        serde_json::to_string(&self).unwrap_or(String::from("Unable to show the tree"))
+        serde_json::to_string_pretty(&self).unwrap_or(String::from("Unable to show the tree"))
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
 pub enum DataStatus {
     // allow to know if the current processed data are encrypted or not
     Encrypted,
     Decrypted,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct DataAsset {
     // can contain encrypted/decrypted data
     #[serde(with = "base58")]
@@ -40,7 +45,7 @@ pub struct DataAsset {
     pub status: Option<DataStatus>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct FileEntity {
     pub path: String,
     pub name: DataAsset,
@@ -48,7 +53,7 @@ pub struct FileEntity {
     pub content: DataAsset,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct DirEntity {
     // must be sent to the client while logged in
     pub path: String, // parent path where the dir is stored
@@ -130,21 +135,16 @@ impl User {
         println!("Before encryption: {}", self.to_string());
 
         let symmetric_key = self.symmetric_key.clone();
+        let mk = self.master_key.asset.clone();
 
         // encrypt the master and asymm private keys using symmetric key
-        let encrypted_master_key = crypto::encrypt(
-            symmetric_key.clone(),
-            self.master_key.asset,
-            self.master_key.nonce,
-        );
+        let encrypted_master_key =
+            crypto::encrypt(symmetric_key.clone(), mk.clone(), self.master_key.nonce);
         println!("Master key has been encrypted");
 
         // TODO must be encrypted with the master key and NOT THE SYMMETRIC KEY, EXPECTED TO CHANGE IN THE FUTURE
-        let encrypted_private_key = crypto::encrypt(
-            symmetric_key.clone(),
-            self.private_key.asset,
-            self.private_key.nonce,
-        );
+        let encrypted_private_key =
+            crypto::encrypt(mk.unwrap(), self.private_key.asset, self.private_key.nonce);
         println!("Private key has been encrypted");
 
         // this use is encrypted
@@ -187,7 +187,7 @@ impl User {
 
         // decrypt the private asymm key using user symm key
         let user_private_key = crypto::decrypt(
-            user_symm_key.clone(),
+            user_master_key.clone(),
             self.private_key.nonce.clone(),
             self.private_key.asset,
         )
@@ -246,16 +246,20 @@ impl DirEntity {
                 nonce: None,
                 status: Some(DataStatus::Decrypted),
             },
-            files: None,
-            sub_dirs: None,
+            files: Some(Vec::default()),
+            sub_dirs: Some(Vec::default()),
         }
     }
 
     // symm key used is the parent dir key
     pub fn encrypt(self, symm_key: Vec<u8>) -> DirEntity {
+        println!("dir before encryption: {}", self.clone().to_string());
+
         // if the dir has already been encrypted a time, use the nonce to reencrypt
         let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
+        println!("Name has been encrypted");
         let encrypted_dir_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
+        println!("Dir key has been encrypted");
 
         // encode the encrypted name in base58 to add it to the path
         // TODO must be done in decryption
@@ -276,9 +280,19 @@ impl DirEntity {
 
     // happends when fetching tree from api so must be decrypted
     pub fn decrypt(self, symm_key: Vec<u8>) -> DirEntity {
-        let decrypted_name =
-            crypto::decrypt(symm_key.clone(), self.name.nonce.clone(), self.name.asset).unwrap();
+        let name = self.name.asset.unwrap();
 
+        let decrypted_name = crypto::decrypt(
+            symm_key.clone(),
+            self.name.nonce.clone(),
+            Some(name.clone()),
+        )
+        .unwrap();
+        /* println!("name: {}", bs58::encode(name.clone()).into_string());
+        println!(
+            "name: {}",
+            bs58::encode(decrypted_name.clone()).into_string()
+        ); */
         let decrypted_dir_key =
             crypto::decrypt(symm_key.clone(), self.key.nonce.clone(), self.key.asset).unwrap();
 
@@ -340,7 +354,11 @@ impl DirEntity {
 
     /// Display name as string
     pub fn show_name(&self) -> String {
-        String::from_utf8_lossy(&self.name.asset.as_ref().unwrap()).to_string()
+        String::from_utf8(self.name.clone().asset.unwrap()).unwrap()
+    }
+
+    pub fn to_string(&self) -> String {
+        serde_json::to_string_pretty(&self).unwrap()
     }
 }
 
