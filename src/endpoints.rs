@@ -1,6 +1,6 @@
 use reqwest::{Client, StatusCode};
 
-use crate::model::{DataAsset, DirEntity, RootTree, User};
+use crate::model::{DataAsset, FsEntity, RootTree, User};
 
 static URL: &str = "http://localhost:8000";
 
@@ -363,7 +363,7 @@ pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<Strin
     }
 }
  */
-pub async fn create_dir(auth_token: &str, dir: &DirEntity) -> Option<String> {
+pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
     let client = Client::new();
 
     match client
@@ -399,7 +399,7 @@ pub async fn create_dir(auth_token: &str, dir: &DirEntity) -> Option<String> {
     }
 }
 
-pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<DirEntity>> {
+pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEntity>> {
     let client = Client::new();
 
     match client
@@ -414,7 +414,7 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<DirEn
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
-                let list_dirs_str: Vec<DirEntity> =
+                let list_dirs_str: Vec<FsEntity> =
                     serde_json::from_str(&res.text().await.unwrap()).unwrap();
 
                 return Some(list_dirs_str);

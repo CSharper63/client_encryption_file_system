@@ -1,4 +1,7 @@
-use crate::model::{DirEntity, User};
+use std::fs;
+use std::path::Path;
+
+use crate::model::{FsEntity, User};
 use cliclack::input;
 use cliclack::log;
 use cliclack::password;
@@ -148,7 +151,7 @@ async fn main() {
 
     let mut parent_id: String = "".to_string();
 
-    let mut selected_dir: DirEntity = Default::default();
+    let mut selected_dir: FsEntity = Default::default();
     loop {
         log::info(format!("You are here: /{}", current_path)).unwrap();
 
@@ -156,7 +159,7 @@ async fn main() {
 
         let selected: &str = select("What about now ?")
             .item("create_dir", "Create a dir", "")
-            .item("create_file", "Create a file", "")
+            .item("add_file", "Create a file", "")
             .item("list_dirs", "List all dirs", "")
             .item("list_files", "List all files", "")
             .interact()
@@ -165,6 +168,7 @@ async fn main() {
         // contains all ref to the dir
         match selected {
             "create_dir" => {
+                // ask user for a dir name
                 let dir_name: String = input("Provide me a directory name")
                     .placeholder("Not sure")
                     .validate(|input: &String| {
@@ -177,9 +181,11 @@ async fn main() {
                     .interact()
                     .unwrap();
 
+                // generate dir -> content:None
                 let new_dir =
-                    DirEntity::create(dir_name.as_str(), &encrypted_path, "dir", &parent_id);
+                    FsEntity::create(dir_name.as_str(), &encrypted_path, None, &parent_id); // so it s a file
 
+                // compute which key will encrypt the dir -> if at root -> user mk else parent dir key
                 let symm_key = if parent_id.is_empty() {
                     my_user.as_ref().unwrap().master_key.clone().asset.unwrap()
                 } else {
@@ -190,10 +196,32 @@ async fn main() {
 
                 endpoints::create_dir(jwt.as_ref().unwrap(), &encr_dir.clone()).await;
             }
-            "create_file" => {}
+            "add_file" => {
+                let path: String =
+                    cliclack::input("Please enter the absolute path of the file you want to add")
+                        .placeholder("C:\\path\\to\\file")
+                        .validate(|input: &String| {
+                            if input.is_empty() {
+                                Err("Please enter a path.")
+                            } else {
+                                Ok(())
+                            }
+                        })
+                        .interact()
+                        .unwrap();
+                let path = Path::new(&path);
+
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+
+                println!("File name: {}", file_name);
+
+                let contents = fs::read(&path).unwrap();
+
+                println!("File content: {:?}", contents);
+            }
             "list_dirs" => {
                 //list all folder by names and uid, then get into, and fetch the child from endpoint
-                let fetched_dirs: Option<Vec<DirEntity>>;
+                let fetched_dirs: Option<Vec<FsEntity>>;
 
                 // means we are in root so list all
 
@@ -201,19 +229,26 @@ async fn main() {
                     endpoints::get_children(&jwt.as_ref().clone().unwrap(), parent_id.as_str())
                         .await;
                 let mut items: Vec<(String, String, &str)> = Vec::default(); // will contains the item to select
-                let mut decrypted_dirs: Vec<DirEntity> = Vec::default(); // will contains the decrypted dirs
+                let mut decrypted_dirs: Vec<FsEntity> = Vec::default(); // will contains the decrypted dirs
 
                 for dir in fetched_dirs.clone().unwrap().iter_mut() {
-                    let decrypted_dir = dir.clone().decrypt(
-                        my_user
-                            .as_ref()
-                            .unwrap()
-                            .master_key
-                            .clone()
-                            .asset
-                            .clone()
-                            .unwrap(),
-                    );
+                    let decrypted_dir = if parent_id.is_empty() {
+                        // if parent_id is empty it means we must decrypt with the user master key
+                        dir.clone().decrypt(
+                            my_user
+                                .as_ref()
+                                .unwrap()
+                                .master_key
+                                .clone()
+                                .asset
+                                .clone()
+                                .unwrap(),
+                        )
+                    } else {
+                        // else decrypt with the parent key
+                        dir.clone().decrypt(selected_dir.key.clone().asset.unwrap())
+                        // TODO decrypt with own key if decrypt files
+                    };
 
                     decrypted_dirs.push(decrypted_dir.clone());
 
