@@ -1,7 +1,3 @@
-use std::ops::Add;
-use std::ops::Deref;
-use std::ops::DerefMut;
-
 use crate::model::{DirEntity, User};
 use cliclack::input;
 use cliclack::log;
@@ -22,9 +18,7 @@ async fn main() {
     let mut salt: Option<Vec<u8>> = None;
     let mut spinner = spinner();
     let mut is_connected: bool = false;
-    let mut current_path: &str;
     let mut my_user: Option<User> = None;
-    let mut root_tree: Option<RootTree> = None;
 
     // select if you already got an account or not
     let selected: &str = select("Do you have an account ?")
@@ -139,9 +133,6 @@ async fn main() {
 
     // now you get connected to the service so get your bucket tree
     if is_connected {
-        // fetch the root tree
-        root_tree = endpoints::get_my_tree(jwt.as_ref().unwrap().as_str()).await;
-
         log::info(format!("Your bucket tree has been fetched successfully")).unwrap();
     }
 
@@ -152,19 +143,12 @@ async fn main() {
     .unwrap();
 
     // make a loop to show the tree
-    let mut current_path: String = "/".to_string(); // current path when navigate over the tree
-    let root = root_tree.as_mut().unwrap(); // the current user tree
-                                            /* let mut bind_dirs = root.dirs.as_mut().unwrap();
-                                               let mut parent_dirs: Vec<&mut DirEntity> = bind_dirs.iter_mut().collect(); // pseudo linked list
-                                            */
+    let mut current_path: String = "".to_string(); // current path when navigate over the tree
+    let mut encrypted_path: String = "".to_string();
+
     let mut parent_dirs: Vec<&mut DirEntity> = Vec::default();
 
-    // start to iter over the tree
-    //let mut selected_dir: &DirEntity; // current selected dir
-
-    let mut ref_dir_index: usize = 0;
-    let mut selected_dir: &mut DirEntity;
-
+    let mut parent_id: String = "".to_string();
     loop {
         log::info(format!("You are here: {}", current_path)).unwrap();
 
@@ -193,7 +177,8 @@ async fn main() {
                     .interact()
                     .unwrap();
 
-                let new_dir = DirEntity::create(dir_name.as_str(), &current_path);
+                let new_dir =
+                    DirEntity::create(dir_name.as_str(), &encrypted_path, "dir", &parent_id);
 
                 let symm_key = if let Some(dir) = parent_dirs.last_mut() {
                     //println!("Dir key will be used");
@@ -204,84 +189,63 @@ async fn main() {
                     my_user.as_ref().unwrap().master_key.clone().asset.unwrap()
                 };
 
-                //println!("Used key: {}", bs58::encode(symm_key.clone()).into_string());
-
                 let encr_dir = new_dir.clone().encrypt(symm_key);
 
-                if parent_dirs.len() == 0 {
-                    // in "/"
-                    root.dirs.as_mut().unwrap().push(encr_dir.clone());
-
-                    println!("There is no dir so i went there");
-                } else {
-                    parent_dirs
-                        .last_mut()
-                        .unwrap()
-                        .sub_dirs
-                        .as_mut()
-                        .unwrap()
-                        .push(encr_dir.clone());
-                }
-
-                // todo call api
-
                 endpoints::create_dir(jwt.as_ref().unwrap(), &encr_dir.clone()).await;
-                endpoints::update_tree(jwt.as_ref().unwrap(), &root.clone()).await;
-
-                //println!("root tree: {}", root.to_string());
             }
             "create_file" => {}
             "list_dirs" => {
-                // fills the items to select with the sub dirs of the current dir
+                //list all folder by names and uid, then get into, and fetch the child from endpoint
+                let fetched_dirs: Option<Vec<DirEntity>>;
 
-                if parent_dirs.len() == 0 {
-                    let mut items: Vec<(usize, String, &str)> = Vec::default(); // will contains the item to select
+                // means we are in root so list all
 
-                    // must list root
-                    let mut decrypted_dirs: Vec<DirEntity> = Vec::default(); // will contains the decrypted dirs
-                    let all_dirs: &mut Vec<DirEntity> = root.dirs.as_mut().unwrap(); // or as_ref
-                                                                                     /*                     println!("Dir ok");
-                                                                                      */
+                fetched_dirs =
+                    endpoints::get_children(&jwt.as_ref().clone().unwrap(), parent_id.as_str())
+                        .await;
+                let mut items: Vec<(String, String, &str)> = Vec::default(); // will contains the item to select
+                let mut decrypted_dirs: Vec<DirEntity> = Vec::default(); // will contains the decrypted dirs
 
-                    for dir in all_dirs.iter_mut() {
-                        let decrypted_dir = dir.clone().decrypt(
-                            my_user
-                                .as_ref()
-                                .unwrap()
-                                .master_key
-                                .clone()
-                                .asset
-                                .clone()
-                                .unwrap(),
-                        );
+                for dir in fetched_dirs.clone().unwrap().iter_mut() {
+                    let decrypted_dir = dir.clone().decrypt(
+                        my_user
+                            .as_ref()
+                            .unwrap()
+                            .master_key
+                            .clone()
+                            .asset
+                            .clone()
+                            .unwrap(),
+                    );
 
-                        decrypted_dirs.push(decrypted_dir.clone());
-                        /*                         println!("Decryption ok");
-                         */
-                        let name = decrypted_dir.clone().show_name(); // add the name of the current ref dir
-                                                                      /* println!("Name ok: {}", name.clone()); */
+                    decrypted_dirs.push(decrypted_dir.clone());
 
-                        items.push((ref_dir_index, format!("📂 {}", name), ""));
-                        /*                         println!("item ok");
-                         */
-                        ref_dir_index = ref_dir_index + 1;
-                        // update the index
-                        // add the index with the folder name with the folder name
-                    }
-                    println!("I am done at this point");
-                    let selected_index: usize = cliclack::select("Pick a folder")
-                        .items(items.as_ref())
-                        .interact()
-                        .unwrap();
-                    ref_dir_index = selected_index;
+                    let name = decrypted_dir.clone().show_name();
 
-                    // add the selected folder to parent_dirs to keep tracking if need 2 get back
-                    /*                     parent_dirs.push(all_dirs.get_mut(ref_dir_index).unwrap()); // !! <-------------------------------------------
-                     */
-                    // at this point they must be decrypted
-                    // iteratate over the dir to select it
-                } else { // must list parent.last
+                    items.push((dir.uid.clone().unwrap(), format!("📂 {}", name), ""));
                 }
+                println!("I am done at this point");
+
+                parent_id = cliclack::select("Pick a folder")
+                    .items(items.as_ref())
+                    .interact()
+                    .unwrap();
+
+                let selected_dir = decrypted_dirs
+                    .iter()
+                    .find(|d| d.uid.clone().unwrap() == parent_id);
+
+                let encry_selected_dir = fetched_dirs
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|d| d.uid.clone().unwrap() == parent_id);
+
+                current_path = add_to_path(&current_path, &selected_dir.unwrap().show_name());
+                encrypted_path = add_to_path(
+                    &encrypted_path,
+                    &&encry_selected_dir.unwrap().encrypted_name(),
+                );
             }
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
         }
@@ -289,4 +253,18 @@ async fn main() {
 
     // Do stuff
     outro("Okkkkayyyyyy let'sgoooo").unwrap();
+}
+
+fn add_to_path(current_path: &str, element: &str) -> String {
+    format!("{}/{}", current_path, element)
+}
+
+fn pop_from_path(current_path: &str) -> Option<String> {
+    let mut components: Vec<&str> = current_path.split('/').collect();
+    components.pop();
+    if !components.is_empty() {
+        Some(components.join("/"))
+    } else {
+        None
+    }
 }

@@ -399,6 +399,45 @@ pub async fn create_dir(auth_token: &str, dir: &DirEntity) -> Option<String> {
     }
 }
 
+pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<DirEntity>> {
+    let client = Client::new();
+
+    match client
+        .get(format!(
+            "{}/dirs/get_children?auth_token={}&parent_id={}",
+            URL.to_string(),
+            auth_token,
+            parent_id.clone()
+        ))
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                let list_dirs_str: Vec<DirEntity> =
+                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
+
+                return Some(list_dirs_str);
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
 pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<String> {
     let client = Client::new();
 

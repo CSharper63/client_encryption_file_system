@@ -53,14 +53,20 @@ pub struct FileEntity {
     pub content: DataAsset,
 }
 
+#[serde_as]
 #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct DirEntity {
+    #[serde_as(as = "NoneAsEmptyString")]
+    pub uid: Option<String>,
+    #[serde_as(as = "NoneAsEmptyString")]
+    pub parent_id: Option<String>,
     // must be sent to the client while logged in
     pub path: String, // parent path where the dir is stored
+    /*     #[serde_as(as = "NoneAsEmptyString")]
+    pub owner_id: Option<String>, */
     pub name: DataAsset,
     pub key: DataAsset,
-    pub files: Option<Vec<FileEntity>>,
-    pub sub_dirs: Option<Vec<DirEntity>>,
+    pub entity_type: String,
 }
 
 #[serde_as]
@@ -69,7 +75,7 @@ pub struct User {
     #[serde_as(as = "NoneAsEmptyString")]
     pub uid: Option<String>,
     pub username: String,
-    #[serde(skip_serializing, default)] // never send the symm key to the server
+    #[serde(skip_serializing, default)] // !! never send the symm key to the server
     pub symmetric_key: Vec<u8>,
     #[serde(with = "base58")]
     pub clear_salt: Option<Vec<u8>>,
@@ -223,18 +229,22 @@ impl User {
 
 impl DirEntity {
     // Ajoute un DirEntity au vector sub_dirs
-    pub fn add_sub_dir(&mut self, sub_dir: DirEntity) {
-        if let Some(sub_dirs) = &mut self.sub_dirs {
-            sub_dirs.push(sub_dir);
-        } else {
-            self.sub_dirs = Some(vec![sub_dir]);
-        }
-    }
-
+    /*  pub fn add_sub_dir(&mut self, sub_dir: DirEntity) {
+           if let Some(sub_dirs) = &mut self.sub_dirs {
+               sub_dirs.push(sub_dir);
+           } else {
+               self.sub_dirs = Some(vec![sub_dir]);
+           }
+       }
+    */
     // Before all must provide the current
-    pub fn create(name: &str, path: &str) -> DirEntity {
+    pub fn create(name: &str, path: &str, entity_types: &str, parent_id: &str) -> DirEntity {
         let dir_key = crypto::generate_master_key();
+
         DirEntity {
+            uid: None,
+            parent_id: Some(parent_id.to_string()),
+            entity_type: entity_types.to_string(),
             path: path.to_string(),
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
@@ -246,8 +256,8 @@ impl DirEntity {
                 nonce: None,
                 status: Some(DataStatus::Decrypted),
             },
-            files: Some(Vec::default()),
-            sub_dirs: Some(Vec::default()),
+            /*    files: Some(Vec::default()),
+            sub_dirs: Some(Vec::default()), */
         }
     }
 
@@ -269,12 +279,15 @@ impl DirEntity {
         // TODO must be encrypted in cascade
 
         DirEntity {
+            uid: self.uid,
+            parent_id: self.parent_id,
+            entity_type: self.entity_type,
             path: self.path, /* + &add_to_path(&base58_name_for_path) */
             // only add the encrypted file name when encrypt the name before send it to the api
             name: encrypted_name,
             key: encrypted_dir_key,
-            files: self.files,
-            sub_dirs: self.sub_dirs,
+            /*   files: self.files,
+            sub_dirs: self.sub_dirs, */
         }
     }
 
@@ -296,7 +309,7 @@ impl DirEntity {
         let decrypted_dir_key =
             crypto::decrypt(symm_key.clone(), self.key.nonce.clone(), self.key.asset).unwrap();
 
-        let decrypted_files = self.files.as_ref().map(|files| {
+        /*  let decrypted_files = self.files.as_ref().map(|files| {
             files
                 .iter()
                 .map(|file| file.clone().decrypt(symm_key.clone()))
@@ -307,10 +320,13 @@ impl DirEntity {
             dirs.iter()
                 .map(|dir| dir.clone().decrypt(symm_key.clone()))
                 .collect()
-        });
+        }); */
 
         DirEntity {
+            uid: self.uid,
+            parent_id: None,
             path: self.path,
+            entity_type: self.entity_type,
             name: DataAsset {
                 asset: Some(decrypted_name),
                 nonce: self.name.nonce.clone(),
@@ -321,13 +337,13 @@ impl DirEntity {
                 nonce: self.key.nonce.clone(),
                 status: Some(DataStatus::Decrypted),
             },
-            files: decrypted_files,
-            sub_dirs: decrypted_dirs,
+            /*   files: decrypted_files,
+            sub_dirs: decrypted_dirs, */
         }
     }
 
     /// Display all the sub folder
-    pub fn show_sub_dirs(&self) {
+    /*  pub fn show_sub_dirs(&self) {
         let mut count: u32 = 1;
         for dir in &self.sub_dirs.clone().unwrap() {
             println!(
@@ -337,10 +353,10 @@ impl DirEntity {
             );
             count = count + 1;
         }
-    }
+    } */
 
     /// Display all files
-    pub fn show_files(&self) {
+    /* pub fn show_files(&self) {
         let mut count: u32 = 1;
         for file in &self.files.clone().unwrap() {
             println!(
@@ -350,11 +366,15 @@ impl DirEntity {
             );
             count = count + 1;
         }
-    }
+    } */
 
     /// Display name as string
     pub fn show_name(&self) -> String {
         String::from_utf8(self.name.clone().asset.unwrap()).unwrap()
+    }
+
+    pub fn encrypted_name(&self) -> String {
+        bs58::encode(&self.name.asset.clone().unwrap()).into_string()
     }
 
     pub fn to_string(&self) -> String {

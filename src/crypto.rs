@@ -4,7 +4,7 @@ use argon2::{
 };
 use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
-    XChaCha20Poly1305,
+    XChaCha20Poly1305, XNonce,
 };
 use rsa::{pkcs8, RsaPrivateKey, RsaPublicKey};
 
@@ -19,14 +19,12 @@ pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> D
             let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
 
             // in case of we want to re-encrypt an existing file
+            // TODO verify nonce size
             let nonce_2_use =
                 nonce.unwrap_or(XChaCha20Poly1305::generate_nonce(&mut OsRng).to_vec());
 
             let ciphertext = cipher
-                .encrypt(
-                    GenericArray::from_slice(nonce_2_use.as_slice()),
-                    data.as_slice(),
-                )
+                .encrypt(XNonce::from_slice(&nonce_2_use), data.as_slice())
                 .unwrap();
 
             let key = DataAsset {
@@ -60,7 +58,7 @@ pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> O
                 let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
 
                 let plaintext = cipher
-                    .decrypt(GenericArray::from_slice(&nonce.unwrap()), data.as_slice())
+                    .decrypt(XNonce::from_slice(&nonce.unwrap()), data.as_slice())
                     .unwrap();
                 return Some(plaintext);
             }
@@ -109,6 +107,7 @@ pub fn generate_master_key() -> Vec<u8> {
 
 /// Use to derive keys from input, in this case the input will be a password hash and the derivation will produce an auth key and a symmetric key.
 pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    //TODO concat auto gen salt to the key
     let mut auth_key = [0u8; 32];
     let mut symmetric_key = [0u8; 32];
 
@@ -127,7 +126,7 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
 /// Use to generate asymmetric public/private keys-pair using RSA-OAEP 4096
 pub fn generate_asymm_keys() -> (Vec<u8>, Vec<u8>) {
     let mut rng = OsRng;
-    let bits = 4096;
+    let bits = 256; // !! for test purposes only
     let priv_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
     let private_key_bytes = pkcs8::EncodePrivateKey::to_pkcs8_der(&priv_key)
         .unwrap()
