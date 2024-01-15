@@ -1,8 +1,6 @@
-use std::borrow::BorrowMut;
+use std::ops::Add;
+use std::ops::Deref;
 use std::ops::DerefMut;
-use std::ops::Index;
-use std::ops::IndexMut;
-use std::vec;
 
 use crate::model::{DirEntity, User};
 use cliclack::input;
@@ -11,7 +9,6 @@ use cliclack::password;
 use cliclack::select;
 use cliclack::spinner;
 use cliclack::{intro, outro};
-use model::FileEntity;
 use model::RootTree;
 
 pub mod crypto;
@@ -85,12 +82,12 @@ async fn main() {
             let salt = salt.unwrap(); // safe to unwrap here because salt is not None
 
             // Rebuild the secret
-            while jwt.is_none() {
+            while jwt.as_ref().is_none() {
                 let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), Some(salt.clone()));
 
                 jwt = endpoints::sign_in(&username, auth_key.clone()).await;
 
-                if jwt.is_none() {
+                if jwt.as_ref().is_none() {
                     spinner.stop("Invalid credential");
                     usr_password = password("Provide a password")
                         .mask('🙈')
@@ -109,9 +106,9 @@ async fn main() {
         }
         // handle new account
         "sign_up" => {
-            while jwt.is_none() {
+            while jwt.as_ref().is_none() {
                 jwt = endpoints::sign_up(&username, &usr_password).await;
-                if jwt.is_none() {
+                if jwt.as_ref().is_none() {
                     username = input("Provide me a username")
                         .placeholder("Not sure")
                         .validate(|input: &String| {
@@ -133,7 +130,7 @@ async fn main() {
                     my_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
                     salt = endpoints::get_salt(&username).await;
 
-                    my_user = Some(my_user.unwrap().decrypt(&usr_password, salt));
+                    my_user = Some(my_user.unwrap().decrypt(&usr_password, salt.clone()));
                 }
             }
         }
@@ -143,7 +140,7 @@ async fn main() {
     // now you get connected to the service so get your bucket tree
     if is_connected {
         // fetch the root tree
-        root_tree = endpoints::get_my_tree(jwt.unwrap().as_str()).await;
+        root_tree = endpoints::get_my_tree(jwt.as_ref().unwrap().as_str()).await;
 
         log::info(format!("Your bucket tree has been fetched successfully")).unwrap();
     }
@@ -156,14 +153,17 @@ async fn main() {
 
     // make a loop to show the tree
     let mut current_path: String = "/".to_string(); // current path when navigate over the tree
-    let mut root = root_tree.as_mut().unwrap(); // the current user tree
-                                                /* let mut bind_dirs = root.dirs.as_mut().unwrap();
-                                                   let mut parent_dirs: Vec<&mut DirEntity> = bind_dirs.iter_mut().collect(); // pseudo linked list
-                                                */
+    let root = root_tree.as_mut().unwrap(); // the current user tree
+                                            /* let mut bind_dirs = root.dirs.as_mut().unwrap();
+                                               let mut parent_dirs: Vec<&mut DirEntity> = bind_dirs.iter_mut().collect(); // pseudo linked list
+                                            */
     let mut parent_dirs: Vec<&mut DirEntity> = Vec::default();
 
     // start to iter over the tree
     //let mut selected_dir: &DirEntity; // current selected dir
+
+    let mut ref_dir_index: usize = 0;
+    let mut selected_dir: &mut DirEntity;
 
     loop {
         log::info(format!("You are here: {}", current_path)).unwrap();
@@ -196,35 +196,92 @@ async fn main() {
                 let new_dir = DirEntity::create(dir_name.as_str(), &current_path);
 
                 let symm_key = if let Some(dir) = parent_dirs.last_mut() {
+                    //println!("Dir key will be used");
                     dir.key.asset.clone().unwrap()
                 } else {
-                    my_user.as_ref().unwrap().symmetric_key.clone()
+                    println!("User key will be used");
+
+                    my_user.as_ref().unwrap().master_key.clone().asset.unwrap()
                 };
+
+                //println!("Used key: {}", bs58::encode(symm_key.clone()).into_string());
+
+                let encr_dir = new_dir.clone().encrypt(symm_key);
 
                 if parent_dirs.len() == 0 {
                     // in "/"
-                    root.dirs.as_mut().unwrap().push(new_dir);
+                    root.dirs.as_mut().unwrap().push(encr_dir.clone());
 
                     println!("There is no dir so i went there");
                 } else {
-                    let encr_dir = new_dir.encrypt(symm_key);
-
                     parent_dirs
                         .last_mut()
                         .unwrap()
                         .sub_dirs
                         .as_mut()
                         .unwrap()
-                        .push(encr_dir);
+                        .push(encr_dir.clone());
                 }
 
                 // todo call api
 
-                println!("root tree: {}", root.to_string());
+                endpoints::create_dir(jwt.as_ref().unwrap(), &encr_dir.clone()).await;
+                endpoints::update_tree(jwt.as_ref().unwrap(), &root.clone()).await;
+
+                //println!("root tree: {}", root.to_string());
             }
             "create_file" => {}
             "list_dirs" => {
                 // fills the items to select with the sub dirs of the current dir
+
+                if parent_dirs.len() == 0 {
+                    let mut items: Vec<(usize, String, &str)> = Vec::default(); // will contains the item to select
+
+                    // must list root
+                    let mut decrypted_dirs: Vec<DirEntity> = Vec::default(); // will contains the decrypted dirs
+                    let all_dirs: &mut Vec<DirEntity> = root.dirs.as_mut().unwrap(); // or as_ref
+                                                                                     /*                     println!("Dir ok");
+                                                                                      */
+
+                    for dir in all_dirs.iter_mut() {
+                        let decrypted_dir = dir.clone().decrypt(
+                            my_user
+                                .as_ref()
+                                .unwrap()
+                                .master_key
+                                .clone()
+                                .asset
+                                .clone()
+                                .unwrap(),
+                        );
+
+                        decrypted_dirs.push(decrypted_dir.clone());
+                        /*                         println!("Decryption ok");
+                         */
+                        let name = decrypted_dir.clone().show_name(); // add the name of the current ref dir
+                                                                      /* println!("Name ok: {}", name.clone()); */
+
+                        items.push((ref_dir_index, format!("📂 {}", name), ""));
+                        /*                         println!("item ok");
+                         */
+                        ref_dir_index = ref_dir_index + 1;
+                        // update the index
+                        // add the index with the folder name with the folder name
+                    }
+                    println!("I am done at this point");
+                    let selected_index: usize = cliclack::select("Pick a folder")
+                        .items(items.as_ref())
+                        .interact()
+                        .unwrap();
+                    ref_dir_index = selected_index;
+
+                    // add the selected folder to parent_dirs to keep tracking if need 2 get back
+                    /*                     parent_dirs.push(all_dirs.get_mut(ref_dir_index).unwrap()); // !! <-------------------------------------------
+                     */
+                    // at this point they must be decrypted
+                    // iteratate over the dir to select it
+                } else { // must list parent.last
+                }
             }
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
         }
