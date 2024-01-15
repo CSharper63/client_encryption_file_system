@@ -1,24 +1,20 @@
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, NoneAsEmptyString};
+use serde_with::{serde_as, skip_serializing_none, NoneAsEmptyString};
 use std::collections::HashMap;
 
 use crate::crypto::{self};
 
-fn add_to_path(name: &str) -> String {
-    format!("/{}", name)
-}
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RootTree {
     #[serde(default)]
-    pub dirs: Option<Vec<DirEntity>>, // all sub folders
-    // toto -> DirEntity -> ref sur toto &DirEntity
+    pub dirs: Option<Vec<FsEntity>>, // all sub folders
+    // toto -> FsEntity -> ref sur toto &FsEntity
     // |
     //  ---- Tete
     // titi
     // tata
     #[serde(default)]
-    pub files: Option<Vec<DirEntity>>, // all root files
+    pub files: Option<Vec<FsEntity>>, // all root files
 }
 
 impl RootTree {
@@ -55,18 +51,17 @@ pub struct FileEntity {
  */
 #[serde_as]
 #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
-pub struct DirEntity {
+pub struct FsEntity {
     #[serde_as(as = "NoneAsEmptyString")]
     pub uid: Option<String>,
     #[serde_as(as = "NoneAsEmptyString")]
     pub parent_id: Option<String>,
-    // must be sent to the client while logged in
     pub path: String, // parent path where the dir is stored
-    /*     #[serde_as(as = "NoneAsEmptyString")]
-    pub owner_id: Option<String>, */
     pub name: DataAsset,
     pub key: DataAsset,
     pub entity_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<DataAsset>,
 }
 
 #[serde_as]
@@ -227,9 +222,9 @@ impl User {
     }
 }
 
-impl DirEntity {
-    // Ajoute un DirEntity au vector sub_dirs
-    /*  pub fn add_sub_dir(&mut self, sub_dir: DirEntity) {
+impl FsEntity {
+    // Ajoute un FsEntity au vector sub_dirs
+    /*  pub fn add_sub_dir(&mut self, sub_dir: FsEntity) {
            if let Some(sub_dirs) = &mut self.sub_dirs {
                sub_dirs.push(sub_dir);
            } else {
@@ -238,13 +233,28 @@ impl DirEntity {
        }
     */
     // Before all must provide the current
-    pub fn create(name: &str, path: &str, entity_types: &str, parent_id: &str) -> DirEntity {
+    pub fn create(name: &str, path: &str, content: Option<Vec<u8>>, parent_id: &str) -> FsEntity {
         let dir_key = crypto::generate_master_key();
+        let mut content_2_process: Option<DataAsset> = None;
 
-        DirEntity {
+        let entity_type = if content.is_none() {
+            // if it s a dir
+            String::from("dir")
+        } else {
+            // else we create the content
+            content_2_process = Some(DataAsset {
+                asset: content,
+                nonce: None,
+                status: Some(DataStatus::Decrypted),
+            });
+            String::from("file")
+        };
+
+        FsEntity {
             uid: None,
+            content: content_2_process,
             parent_id: Some(parent_id.to_string()),
-            entity_type: entity_types.to_string(),
+            entity_type: entity_type,
             path: path.to_string(),
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
@@ -262,37 +272,45 @@ impl DirEntity {
     }
 
     // symm key used is the parent dir key
-    pub fn encrypt(self, symm_key: Vec<u8>) -> DirEntity {
+    pub fn encrypt(self, symm_key: Vec<u8>) -> FsEntity {
         println!("dir before encryption: {}", self.clone().to_string());
 
         // if the dir has already been encrypted a time, use the nonce to reencrypt
         let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
         println!("Name has been encrypted");
-        let encrypted_dir_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
+        let encrypted_dir_key = crypto::encrypt(
+            symm_key.clone(),
+            self.key.clone().asset,
+            self.key.clone().nonce,
+        );
         println!("Dir key has been encrypted");
 
-        // encode the encrypted name in base58 to add it to the path
-        // TODO must be done in decryption
-        /* let base58_name_for_path =
-        bs58::encode(encrypted_name.clone().asset.unwrap()).into_string(); */
+        let mut encrypted_content: Option<DataAsset> = None;
 
-        // TODO must be encrypted in cascade
+        if self.entity_type == "file" {
+            // if it is a file it must be encrypted with its own key
 
-        DirEntity {
+            encrypted_content = Some(crypto::encrypt(
+                self.key.asset.unwrap(), // for a file the content
+                self.content.clone().unwrap().asset,
+                self.content.unwrap().nonce,
+            ));
+        }
+
+        FsEntity {
             uid: self.uid,
+            content: encrypted_content,
             parent_id: self.parent_id,
             entity_type: self.entity_type,
             path: self.path, /* + &add_to_path(&base58_name_for_path) */
             // only add the encrypted file name when encrypt the name before send it to the api
             name: encrypted_name,
             key: encrypted_dir_key,
-            /*   files: self.files,
-            sub_dirs: self.sub_dirs, */
         }
     }
 
     // happends when fetching tree from api so must be decrypted
-    pub fn decrypt(self, symm_key: Vec<u8>) -> DirEntity {
+    pub fn decrypt(self, symm_key: Vec<u8>) -> FsEntity {
         let name = self.name.asset.unwrap();
 
         let decrypted_name = crypto::decrypt(
@@ -301,32 +319,34 @@ impl DirEntity {
             Some(name.clone()),
         )
         .unwrap();
-        /* println!("name: {}", bs58::encode(name.clone()).into_string());
-        println!(
-            "name: {}",
-            bs58::encode(decrypted_name.clone()).into_string()
-        ); */
-        let decrypted_dir_key =
-            crypto::decrypt(symm_key.clone(), self.key.nonce.clone(), self.key.asset).unwrap();
 
-        /*  let decrypted_files = self.files.as_ref().map(|files| {
-            files
-                .iter()
-                .map(|file| file.clone().decrypt(symm_key.clone()))
-                .collect()
-        });
+        let decrypted_dir_key = crypto::decrypt(
+            symm_key.clone(),
+            self.key.nonce.clone(),
+            self.key.clone().asset,
+        )
+        .unwrap();
 
-        let decrypted_dirs = self.sub_dirs.as_ref().map(|dirs| {
-            dirs.iter()
-                .map(|dir| dir.clone().decrypt(symm_key.clone()))
-                .collect()
-        }); */
+        let decrypted_content = if self.entity_type == "file" {
+            Some(DataAsset {
+                asset: crypto::decrypt(
+                    self.key.clone().asset.unwrap(),
+                    self.content.clone().unwrap().nonce.clone(),
+                    self.key.asset,
+                ),
+                nonce: self.content.unwrap().nonce.clone(),
+                status: Some(DataStatus::Decrypted),
+            })
+        } else {
+            None
+        };
 
-        DirEntity {
+        FsEntity {
             uid: self.uid,
             parent_id: None,
             path: self.path,
             entity_type: self.entity_type,
+            content: decrypted_content,
             name: DataAsset {
                 asset: Some(decrypted_name),
                 nonce: self.name.nonce.clone(),
@@ -342,32 +362,6 @@ impl DirEntity {
         }
     }
 
-    /// Display all the sub folder
-    /*  pub fn show_sub_dirs(&self) {
-        let mut count: u32 = 1;
-        for dir in &self.sub_dirs.clone().unwrap() {
-            println!(
-                "{}.{}",
-                count,
-                String::from_utf8_lossy(dir.name.asset.as_ref().unwrap())
-            );
-            count = count + 1;
-        }
-    } */
-
-    /// Display all files
-    /* pub fn show_files(&self) {
-        let mut count: u32 = 1;
-        for file in &self.files.clone().unwrap() {
-            println!(
-                "{}.{}",
-                count,
-                String::from_utf8_lossy(file.name.asset.as_ref().unwrap())
-            );
-            count = count + 1;
-        }
-    } */
-
     /// Display name as string
     pub fn show_name(&self) -> String {
         String::from_utf8(self.name.clone().asset.unwrap()).unwrap()
@@ -381,77 +375,6 @@ impl DirEntity {
         serde_json::to_string_pretty(&self).unwrap()
     }
 }
-
-/* impl FileEntity {
-    pub fn create(name: &str, content: Vec<u8>, path: &str) -> FileEntity {
-        let file_key = crypto::generate_master_key();
-        FileEntity {
-            path: path.to_string(), /*  + &add_to_path(name) */
-            // parent path
-            name: DataAsset {
-                asset: Some(name.as_bytes().to_vec()),
-                nonce: None,
-                status: Some(DataStatus::Decrypted),
-            },
-            key: DataAsset {
-                asset: Some(file_key),
-                nonce: None,
-                status: Some(DataStatus::Decrypted),
-            },
-            content: DataAsset {
-                asset: Some(content),
-                nonce: None,
-                status: Some(DataStatus::Decrypted),
-            },
-        }
-    }
-
-    pub fn encrypt(self, symm_key: Vec<u8>) -> FileEntity {
-        // Todo handle while
-        let encrypted_name = crypto::encrypt(symm_key.clone(), self.name.asset, self.name.nonce);
-        let encrypted_content =
-            crypto::encrypt(symm_key.clone(), self.content.asset, self.content.nonce);
-        let encrypted_file_key = crypto::encrypt(symm_key, self.key.asset, self.key.nonce);
-
-        FileEntity {
-            path: self.path,
-            name: encrypted_name,
-            key: encrypted_file_key,
-            content: encrypted_content,
-        }
-    }
-    pub fn decrypt(self, symm_key: Vec<u8>) -> FileEntity {
-        let decrypted_name =
-            crypto::decrypt(symm_key.clone(), self.name.nonce.clone(), self.name.asset).unwrap();
-        let decrypted_key =
-            crypto::decrypt(symm_key.clone(), self.key.nonce.clone(), self.key.asset).unwrap();
-        let decrypted_content = crypto::decrypt(
-            symm_key.clone(),
-            self.content.nonce.clone(),
-            self.content.asset,
-        )
-        .unwrap();
-
-        FileEntity {
-            path: self.path.clone(),
-            name: DataAsset {
-                asset: Some(decrypted_name),
-                nonce: self.name.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
-            },
-            key: DataAsset {
-                asset: Some(decrypted_key),
-                nonce: self.key.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
-            },
-            content: DataAsset {
-                asset: Some(decrypted_content),
-                nonce: self.content.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
-            },
-        }
-    }
-} */
 
 mod base58 {
 
