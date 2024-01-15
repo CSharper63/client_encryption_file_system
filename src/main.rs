@@ -217,6 +217,16 @@ async fn main() {
 
                 let contents = fs::read(&path).unwrap();
 
+                let new_file = FsEntity::create(
+                    file_name,
+                    &encrypted_path,
+                    Some(contents.clone()),
+                    &parent_id.clone(),
+                );
+                let file_key = new_file.clone().key.asset.unwrap();
+                let encrypted_file = new_file.encrypt(file_key);
+
+                endpoints::add_file(&jwt.as_ref().unwrap(), &encrypted_file);
                 println!("File content: {:?}", contents);
             }
             "list_dirs" => {

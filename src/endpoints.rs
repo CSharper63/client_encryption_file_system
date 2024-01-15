@@ -325,8 +325,8 @@ pub async fn share_entity(
     }
 }
 
-/* /// The path set must be encrypted
-pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<String> {
+/// The path set must be encrypted
+pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
     let client = Client::new();
 
     let serialised_file = serde_json::to_string(&new_file).unwrap();
@@ -362,7 +362,7 @@ pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<Strin
         }
     }
 }
- */
+
 pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
     let client = Client::new();
 
