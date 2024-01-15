@@ -18,7 +18,7 @@ pub struct RootTree {
     // titi
     // tata
     #[serde(default)]
-    pub files: Option<Vec<FileEntity>>, // all root files
+    pub files: Option<Vec<DirEntity>>, // all root files
 }
 
 impl RootTree {
@@ -45,14 +45,14 @@ pub struct DataAsset {
     pub status: Option<DataStatus>,
 }
 
-#[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
+/* #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct FileEntity {
     pub path: String,
     pub name: DataAsset,
     pub key: DataAsset,
     pub content: DataAsset,
 }
-
+ */
 #[serde_as]
 #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct DirEntity {
@@ -382,7 +382,7 @@ impl DirEntity {
     }
 }
 
-impl FileEntity {
+/* impl FileEntity {
     pub fn create(name: &str, content: Vec<u8>, path: &str) -> FileEntity {
         let file_key = crypto::generate_master_key();
         FileEntity {
@@ -451,7 +451,7 @@ impl FileEntity {
             },
         }
     }
-}
+} */
 
 mod base58 {
 

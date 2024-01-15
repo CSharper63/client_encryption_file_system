@@ -146,11 +146,11 @@ async fn main() {
     let mut current_path: String = "".to_string(); // current path when navigate over the tree
     let mut encrypted_path: String = "".to_string();
 
-    let mut parent_dirs: Vec<&mut DirEntity> = Vec::default();
-
     let mut parent_id: String = "".to_string();
+
+    let mut selected_dir: DirEntity = Default::default();
     loop {
-        log::info(format!("You are here: {}", current_path)).unwrap();
+        log::info(format!("You are here: /{}", current_path)).unwrap();
 
         // if we want o modifiy the tree -> modify dirs_refs_to_process
 
@@ -180,13 +180,10 @@ async fn main() {
                 let new_dir =
                     DirEntity::create(dir_name.as_str(), &encrypted_path, "dir", &parent_id);
 
-                let symm_key = if let Some(dir) = parent_dirs.last_mut() {
-                    //println!("Dir key will be used");
-                    dir.key.asset.clone().unwrap()
-                } else {
-                    println!("User key will be used");
-
+                let symm_key = if parent_id.is_empty() {
                     my_user.as_ref().unwrap().master_key.clone().asset.unwrap()
+                } else {
+                    selected_dir.key.asset.clone().unwrap()
                 };
 
                 let encr_dir = new_dir.clone().encrypt(symm_key);
@@ -231,9 +228,11 @@ async fn main() {
                     .interact()
                     .unwrap();
 
-                let selected_dir = decrypted_dirs
+                selected_dir = decrypted_dirs
                     .iter()
-                    .find(|d| d.uid.clone().unwrap() == parent_id);
+                    .find(|d| d.uid.clone().unwrap() == parent_id)
+                    .unwrap()
+                    .clone();
 
                 let encry_selected_dir = fetched_dirs
                     .as_ref()
@@ -241,7 +240,7 @@ async fn main() {
                     .iter()
                     .find(|d| d.uid.clone().unwrap() == parent_id);
 
-                current_path = add_to_path(&current_path, &selected_dir.unwrap().show_name());
+                current_path = add_to_path(&current_path, &selected_dir.clone().show_name());
                 encrypted_path = add_to_path(
                     &encrypted_path,
                     &&encry_selected_dir.unwrap().encrypted_name(),
@@ -256,7 +255,11 @@ async fn main() {
 }
 
 fn add_to_path(current_path: &str, element: &str) -> String {
-    format!("{}/{}", current_path, element)
+    if current_path == "" {
+        format!("{}", element)
+    } else {
+        format!("{}/{}", current_path, element)
+    }
 }
 
 fn pop_from_path(current_path: &str) -> Option<String> {

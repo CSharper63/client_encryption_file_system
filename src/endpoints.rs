@@ -1,6 +1,6 @@
 use reqwest::{Client, StatusCode};
 
-use crate::model::{DataAsset, DirEntity, FileEntity, RootTree, User};
+use crate::model::{DataAsset, DirEntity, RootTree, User};
 
 static URL: &str = "http://localhost:8000";
 
@@ -159,7 +159,7 @@ pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
     }
 }
 
-pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option<FileEntity> {
+/* pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option<FileEntity> {
     let client = Client::new();
 
     let path = expected_file.clone().path;
@@ -200,7 +200,7 @@ pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option
             None
         }
     }
-}
+} */
 
 pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     let client = Client::new();
@@ -325,7 +325,7 @@ pub async fn share_entity(
     }
 }
 
-/// The path set must be encrypted
+/* /// The path set must be encrypted
 pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<String> {
     let client = Client::new();
 
@@ -362,7 +362,7 @@ pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<Strin
         }
     }
 }
-
+ */
 pub async fn create_dir(auth_token: &str, dir: &DirEntity) -> Option<String> {
     let client = Client::new();
 
