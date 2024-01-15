@@ -363,17 +363,8 @@ pub async fn create_file(auth_token: &str, new_file: FileEntity) -> Option<Strin
     }
 }
 
-pub async fn create_dir(
-    auth_token: &str,
-    name: &str,
-    current_path: &str,
-    key_2_encrypt_dir: Vec<u8>,
-) -> Option<String> {
+pub async fn create_dir(auth_token: &str, dir: &DirEntity) -> Option<String> {
     let client = Client::new();
-
-    let new_folder = DirEntity::create(name, current_path);
-
-    let ciphered_dir = new_folder.encrypt(key_2_encrypt_dir);
 
     match client
         .post(format!(
@@ -381,7 +372,43 @@ pub async fn create_dir(
             URL.to_string(),
             auth_token,
         ))
-        .json(&ciphered_dir)
+        .json(dir)
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                return Some(res.text().await.unwrap());
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
+pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<String> {
+    let client = Client::new();
+
+    match client
+        .post(format!(
+            "{}/tree/update?auth_token={}",
+            URL.to_string(),
+            auth_token,
+        ))
+        .json(updated_tree)
         .send()
         .await
     {
