@@ -25,10 +25,10 @@ pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> D
 
             let ciphertext = cipher
                 .encrypt(XNonce::from_slice(&nonce_2_use), data.as_slice())
-                .unwrap();
+                .map_err(|e| format!("Error while encrypting: {}", e));
 
             let key = DataAsset {
-                asset: Some(ciphertext),
+                asset: Some(ciphertext.unwrap()),
                 nonce: Some(nonce_2_use),
                 status: Some(DataStatus::Encrypted),
             };
@@ -59,8 +59,8 @@ pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> O
 
                 let plaintext = cipher
                     .decrypt(XNonce::from_slice(&nonce.unwrap()), data.as_slice())
-                    .unwrap();
-                return Some(plaintext);
+                    .map_err(|e| format!("Error while decrypting: {}", e));
+                return Some(plaintext.unwrap());
             }
             None => {
                 return None;

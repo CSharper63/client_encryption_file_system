@@ -1,6 +1,8 @@
 use reqwest::{Client, StatusCode};
 
-use crate::model::{DataAsset, FsEntity, RootTree, User};
+use model::User;
+
+use crate::model::{self, FsEntity};
 
 static URL: &str = "http://localhost:8000";
 
@@ -45,7 +47,6 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
 
 pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
     let client = Client::new();
-    println!("username to process: {}", username);
     match client
         .get(format!(
             "{}/get_sign_in?username={}&auth_key={}",
@@ -122,7 +123,7 @@ pub async fn get_user(auth_token: &str) -> Option<User> {
 }
 
 /// Use to fetch encrypted tree metadata of the user
-pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
+/* pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
     let client = Client::new();
 
     match client
@@ -157,7 +158,7 @@ pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
             None
         }
     }
-}
+} */
 
 /* pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option<FileEntity> {
     let client = Client::new();
@@ -329,14 +330,13 @@ pub async fn share_entity(
 pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
     let client = Client::new();
 
-    let serialised_file = serde_json::to_string(&new_file).unwrap();
     match client
-        .get(format!(
-            "{}/file/create/auth_token={}",
+        .post(format!(
+            "{}/file/create?auth_token={}",
             URL.to_string(),
             auth_token,
         ))
-        .json(&serialised_file)
+        .json(&new_file)
         .send()
         .await
     {
@@ -407,7 +407,7 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
             "{}/dirs/get_children?auth_token={}&parent_id={}",
             URL.to_string(),
             auth_token,
-            parent_id.clone()
+            parent_id
         ))
         .send()
         .await
@@ -438,7 +438,7 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
     }
 }
 
-pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<String> {
+/* pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<String> {
     let client = Client::new();
 
     match client
@@ -472,4 +472,4 @@ pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<St
             None
         }
     }
-}
+} */
