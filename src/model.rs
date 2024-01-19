@@ -229,8 +229,8 @@ pub struct User {
     #[serde(with = "base58")]
     pub public_key: Option<Vec<u8>>,
     pub private_key: DataAsset,
-    pub shared_to_others: Option<HashMap<String, String>>,
-    pub shared_to_me: Option<HashMap<String, String>>,
+    pub shared_to_others: Option<Vec<String>>,
+    pub shared_to_me: Option<Vec<String>>,
 }
 
 impl User {
@@ -265,8 +265,8 @@ impl User {
                 nonce: None,
                 status: Some(DataStatus::Decrypted),
             },
-            shared_to_me: Some(HashMap::new()),
-            shared_to_others: Some(HashMap::new()),
+            shared_to_me: Some(Vec::new()),
+            shared_to_others: Some(Vec::new()),
         }
     }
 
@@ -315,14 +315,16 @@ impl User {
                 nonce: encrypted_private_key.nonce,
                 status: Some(DataStatus::Encrypted),
             },
-            shared_to_me: Some(HashMap::new()),
-            shared_to_others: Some(HashMap::new()),
+            shared_to_me: Some(Vec::new()),
+            shared_to_others: Some(Vec::new()),
         }
     }
 
     pub fn decrypt(self, password: &str, salt: Option<Vec<u8>>) -> User {
+        println!("before decryption: {}", self.to_string());
+
         // use the fetched salt to generate password hash
-        let (password_hash, _) = crypto::hash_password(password, salt.clone());
+        let (password_hash, auth_key) = crypto::hash_password(password, salt.clone());
 
         // retrieve user symm key using kdf from the password hash
         let (_, user_symm_key) = crypto::kdf(password_hash.try_into().unwrap_or_default());
@@ -348,7 +350,7 @@ impl User {
             username: self.username,
             symmetric_key: user_symm_key.clone(), // decrypted
             clear_salt: salt,
-            auth_key: self.auth_key, // decrypted
+            auth_key: Some(auth_key), // decrypted
             master_key: DataAsset {
                 asset: Some(user_master_key), // decrypted
                 nonce: self.master_key.nonce, // we don't need it anymore as soon as we fetch and decrypted the content from the api
@@ -360,9 +362,64 @@ impl User {
                 nonce: self.private_key.nonce.clone(),
                 status: Some(DataStatus::Decrypted),
             },
-            shared_to_me: Some(HashMap::new()),
-            shared_to_others: Some(HashMap::new()),
+            shared_to_me: Some(Vec::new()),
+            shared_to_others: Some(Vec::new()),
         }
+    }
+
+    pub fn update_password(&self, old_password: &str, new_password: &str) -> Option<User> {
+        /* if self.status == DataStatus::Decrypted { */
+        println!("{}", self.to_string());
+        // must verify that the password is good
+        let (auth_key, symm_key) = User::rebuild_secret(old_password, self.clear_salt.clone());
+        println!(
+            "{}\n{}",
+            bs58::encode(auth_key.clone()).into_string(),
+            bs58::encode(self.auth_key.clone().unwrap()).into_string(),
+        );
+
+        if symm_key == self.symmetric_key {
+            let (hash, salt) = crypto::hash_password(new_password, None);
+            println!("password hashed");
+
+            // user kdf to derive auth and symm key
+            let (auth_key, symm_key) = crypto::kdf(hash);
+            println!("Key derived");
+
+            let master_key = DataAsset {
+                asset: self.master_key.clone().asset,
+                nonce: None,
+                status: Some(DataStatus::Decrypted),
+            };
+            let private_key = DataAsset {
+                asset: self.private_key.clone().asset,
+                nonce: None,
+                status: Some(DataStatus::Decrypted),
+            };
+
+            Some(User {
+                uid: self.uid.clone(),               // - still the same
+                username: self.username.to_string(), // - still the same
+                symmetric_key: symm_key,             // + changed
+                clear_salt: Some(salt),              // + changed
+                master_key: master_key,              // - still the same
+                auth_key: Some(auth_key),            // + changed
+                public_key: self.public_key.clone(), // - still the same
+                private_key: private_key,            // - still the same
+                shared_to_me: self.shared_to_me.clone(),
+                shared_to_others: self.shared_to_others.clone(),
+            })
+        } else {
+            println!("invalid secret");
+
+            // invalid password
+            None
+        }
+
+        /*  } else { */
+        // decrypt the user before
+        /*  None */
+        /*    } */
     }
 
     pub fn to_string(&self) -> String {

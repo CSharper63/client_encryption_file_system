@@ -1,6 +1,4 @@
-use std::fs;
 use std::fs::File;
-use std::io::BufReader;
 use std::io::Read;
 use std::path::Path;
 
@@ -20,13 +18,13 @@ pub mod model;
 #[tokio::main]
 async fn main() {
     intro("Welcome to encryption client").unwrap();
-
-    let mut jwt: Option<String> = None;
-    let mut salt: Option<Vec<u8>> = None;
-    let mut spinner = spinner();
-    let mut is_connected: bool = false;
-    let mut my_user: Option<User> = None;
     loop {
+        let mut jwt: Option<String> = None;
+        let mut salt: Option<Vec<u8>> = None;
+        let mut spinner = spinner();
+        let mut is_connected: bool = false;
+        let mut my_user: Option<User> = None;
+
         // select if you already got an account or not
 
         let selected: &str = select("Do you have an account ?")
@@ -49,7 +47,7 @@ async fn main() {
             .unwrap();
 
         // provide a password
-        let mut usr_password: String = password("Provide a password")
+        let mut usr_password: String = password("🔑Provide a password")
             .mask('🙈')
             .interact()
             .unwrap();
@@ -145,7 +143,7 @@ async fn main() {
             log::info(format!("Your bucket tree has been fetched successfully")).unwrap();
         }
 
-        log::info(format!(
+        log::success(format!(
             "Welcome Mr. {}",
             my_user.as_ref().unwrap().username
         ))
@@ -158,17 +156,28 @@ async fn main() {
         let mut parent_id: String = "".to_string();
 
         let mut selected_dir: FsEntity = Default::default();
+        let mut items: Vec<(&str, &str, &str)> = Vec::default();
+
+        items.push(("create_dir", "Create a dir", ""));
+        items.push(("add_file", "Add file", ""));
+        items.push(("list_content", "List content", ""));
+        items.push(("change_password", "Change password", ""));
+        items.push(("sign_out", "Sign out", ""));
+        items.push(("back", "Back", ""));
+
         loop {
-            log::info(format!("You are here: /{}", current_path)).unwrap();
+            log::info(format!(" -> 📂 You are here: /{}", current_path)).unwrap();
 
             // if we want o modifiy the tree -> modify dirs_refs_to_process
 
+            if parent_id.clone().is_empty() {
+                items.pop();
+            } else if !items.contains(&("back", "Back", "")) {
+                items.push(("back", "Back", ""));
+            }
+
             let selected: &str = select("What about now ?")
-                .item("create_dir", "Create a dir", "")
-                .item("add_file", "Add file", "")
-                .item("list_content", "List content", "")
-                .item("change_password", "Change password", "")
-                .item("sign_out", "Sign out", "")
+                .items(items.as_ref())
                 .interact()
                 .unwrap();
 
@@ -180,6 +189,11 @@ async fn main() {
 
             // contains all ref to the dir
             match selected {
+                "sign_out" => {
+                    jwt = Some("".to_string());
+                    my_user = None;
+                    break;
+                }
                 "create_dir" => {
                     // ask user for a dir name
                     let dir_name: String = input("Provide me a directory name")
@@ -222,8 +236,8 @@ async fn main() {
 
                     let file_name = path.file_name().unwrap().to_str().unwrap();
 
-                    println!("File name: {}", file_name);
-                    println!("Path: {}", encrypted_path);
+                    /* println!("File name: {}", file_name);
+                    println!("Path: {}", encrypted_path); */
 
                     let mut content = Vec::new();
 
@@ -287,6 +301,7 @@ async fn main() {
 
                         items.push((dir.uid.clone().unwrap(), format!("{} {}", icon, name), ""));
                     }
+
                     println!("I am done at this point");
 
                     parent_id = cliclack::select("Pick a folder")
@@ -312,12 +327,73 @@ async fn main() {
                         &&encry_selected_dir.unwrap().encrypted_name(),
                     );
                 }
+
+                "change_password" => {
+                    let old_1 = password("🔑Provide your current password")
+                        .mask('🙈')
+                        .interact()
+                        .unwrap();
+
+                    let new_1 = password("🔑Provide a new password")
+                        .mask('🙈')
+                        .interact()
+                        .unwrap();
+
+                    println!(
+                        "master key: {}",
+                        bs58::encode(my_user.clone().unwrap().master_key.asset.unwrap())
+                            .into_string()
+                    );
+
+                    // !! must be decrypted before
+                    let updated = my_user
+                        .clone()
+                        .unwrap()
+                        .update_password(&old_1, new_1.as_str());
+
+                    if updated.clone().is_none() {
+                        log::error(format!("Invalid password, please re-sign in")).unwrap();
+                    } else {
+                        println!(
+                            "master key: {}",
+                            bs58::encode(updated.clone().unwrap().master_key.asset.unwrap())
+                                .into_string()
+                        );
+
+                        let new_encrypted_user = updated.unwrap().encrypt();
+
+                        endpoints::update_password(
+                            &jwt.as_ref().clone().unwrap(),
+                            &new_encrypted_user,
+                        )
+                        .await;
+
+                        log::success(format!("Password changed successfully")).unwrap();
+                    }
+
+                    break;
+                }
+                "list_shared_with_me" => {
+
+                    // about share ->
+                    // if its a dir, we must add the whole tree children to authorized list access to the person I share with.
+                    // struct will look like -> {"shared_item_uid":"encrypted key"} -> server must verify that is not a root folder,
+                    // and must delete the parent id before the sending the shared to the user
+                }
+
+                "back" => {
+                    current_path = pop_from_path(current_path.as_str()).unwrap_or("".to_string());
+                    encrypted_path =
+                        pop_from_path(encrypted_path.as_str()).unwrap_or("".to_string());
+
+                    parent_id = selected_dir.clone().parent_id.unwrap_or("".to_string());
+                }
                 _ => log::error("Hmmm you are not supposed to be there").unwrap(),
             }
         }
 
         // Do stuff
-        outro("Okkkkayyyyyy let'sgoooo").unwrap();
+        log::info("Bye bye");
     }
 }
 

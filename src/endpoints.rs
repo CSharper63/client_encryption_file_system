@@ -45,6 +45,41 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
     }
 }
 
+pub async fn update_password(auth_token: &str, updated_user: &User) -> Option<String> {
+    let client = Client::new();
+
+    // create the user -> contains secret content
+
+    match client
+        .post(format!(
+            "{}/auth/update_password?auth_token={}",
+            URL.to_string(),
+            auth_token
+        ))
+        .json(&updated_user)
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => Some("Password changed".to_string()),
+            _ => {
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
 pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
     let client = Client::new();
     match client
