@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Read;
+use std::ops::Deref;
 use std::path::Path;
 
 use cliclack::input;
@@ -8,6 +9,7 @@ use cliclack::password;
 use cliclack::select;
 use cliclack::spinner;
 use cliclack::{intro, outro};
+use model::Sharing;
 use model::User;
 
 use crate::model::FsEntity;
@@ -97,9 +99,13 @@ async fn main() {
                     } else {
                         is_connected = true;
 
-                        my_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
+                        let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
 
-                        my_user = Some(my_user.unwrap().decrypt(&usr_password, Some(salt.clone())));
+                        my_user = Some(
+                            fetched_user
+                                .unwrap()
+                                .decrypt(&usr_password, Some(salt.clone())),
+                        );
 
                         spinner.stop("Signed in successfully");
                     }
@@ -128,10 +134,10 @@ async fn main() {
                     } else {
                         is_connected = true;
                         spinner.stop("Account successfully created !");
-                        my_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
+                        let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
                         salt = endpoints::get_salt(&username).await;
 
-                        my_user = Some(my_user.unwrap().decrypt(&usr_password, salt.clone()));
+                        my_user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone()));
                     }
                 }
             }
@@ -149,6 +155,8 @@ async fn main() {
         ))
         .unwrap();
 
+        /*         println!("LOGGED USER:  {}", my_user.as_ref().unwrap().to_string());
+         */
         // make a loop to show the tree
         let mut current_path: String = "".to_string(); // current path when navigate over the tree
         let mut encrypted_path: String = "".to_string();
@@ -161,19 +169,33 @@ async fn main() {
         items.push(("create_dir", "Create a dir", ""));
         items.push(("add_file", "Add file", ""));
         items.push(("list_content", "List content", ""));
+        if !parent_id.is_empty() {
+            items.push(("share_entity", "Share the element", ""));
+        }
+        items.push(("revoke_share", "Revoke sharing", ""));
+
         items.push(("change_password", "Change password", ""));
         items.push(("sign_out", "Sign out", ""));
-        items.push(("back", "Back", ""));
+
+        let mut navigtion_in_owned_elem = false;
+
+        // items.push(("back", "Back", ""));
 
         loop {
             log::info(format!(" -> 📂 You are here: /{}", current_path)).unwrap();
 
             // if we want o modifiy the tree -> modify dirs_refs_to_process
 
-            if parent_id.clone().is_empty() {
-                items.pop();
-            } else if !items.contains(&("back", "Back", "")) {
+            if !parent_id.clone().is_empty() && !items.contains(&("back", "Back", "")) {
                 items.push(("back", "Back", ""));
+
+                if navigtion_in_owned_elem {
+                    if !items.contains(&("share_entity", "Share the element", "")) {
+                        items.push(("share_entity", "Share the element", ""));
+                    }
+                } else {
+                    items.retain(|item| item != &("share_entity", "Share the element", ""));
+                }
             }
 
             let selected: &str = select("What about now ?")
@@ -259,6 +281,7 @@ async fn main() {
                         .unwrap();
                 }
                 "list_content" => {
+                    navigtion_in_owned_elem = true;
                     //list all folder by names and uid, then get into, and fetch the child from endpoint
                     let fetched_dirs: Option<Vec<FsEntity>>;
 
@@ -327,7 +350,6 @@ async fn main() {
                         &&encry_selected_dir.unwrap().encrypted_name(),
                     );
                 }
-
                 "change_password" => {
                     let old_1 = password("🔑Provide your current password")
                         .mask('🙈')
@@ -339,15 +361,9 @@ async fn main() {
                         .interact()
                         .unwrap();
 
-                    println!(
-                        "master key: {}",
-                        bs58::encode(my_user.clone().unwrap().master_key.asset.unwrap())
-                            .into_string()
-                    );
-
                     // !! must be decrypted before
                     let updated = my_user
-                        .clone()
+                        .as_ref()
                         .unwrap()
                         .update_password(&old_1, new_1.as_str());
 
@@ -381,6 +397,68 @@ async fn main() {
                     // and must delete the parent id before the sending the shared to the user
                 }
 
+                "share_entity" => {
+                    let username: String = cliclack::input(
+                        "Please enter the username you want to share the element with",
+                    )
+                    .placeholder("john_doe_76")
+                    .validate(|input: &String| {
+                        if input.is_empty() {
+                            Err("Please enter a username.")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .interact()
+                    .unwrap();
+
+                    // get the public key of the user I want to share my dir with
+                    let pb_mat =
+                        endpoints::get_public_key_with_uid(&jwt.as_ref().unwrap(), &username).await;
+
+                    // encrypt the dir key with the user public key
+
+                    match crypto::encrypt_asymm(
+                        pb_mat.clone().unwrap().public_key.unwrap(),
+                        selected_dir.key.asset.clone().unwrap(),
+                    ) {
+                        Ok(encrypted_key) => {
+                            let element_expected_2_be_shared = Sharing {
+                                entity_uid: selected_dir.clone().uid.unwrap(),
+                                key: Some(encrypted_key),
+                                owner_id: my_user.as_ref().unwrap().uid.clone().unwrap(),
+                                user_id: pb_mat.clone().unwrap().owner_id.unwrap(),
+                            };
+
+                            endpoints::share_entity(
+                                &jwt.as_ref().clone().unwrap(),
+                                &element_expected_2_be_shared,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            log::error(format!("Encryption error: {}", e));
+                        }
+                    }
+                }
+                "revoke_share" => {
+                    println!("{}", selected_dir.clone().uid.unwrap().as_str());
+                    let share_2_revoke = my_user
+                        .as_ref()
+                        .unwrap()
+                        .find_sharing_by_entity_id(selected_dir.clone().uid.unwrap().as_str());
+
+                    if share_2_revoke.is_some() {
+                        let ok = endpoints::revoke_share(
+                            jwt.as_ref().unwrap(),
+                            share_2_revoke.as_ref().unwrap(),
+                        )
+                        .await;
+                        log::success("The share of this item has been revoked successfully");
+                    } else {
+                        log::warning("This item is not shared yet");
+                    }
+                }
                 "back" => {
                     current_path = pop_from_path(current_path.as_str()).unwrap_or("".to_string());
                     encrypted_path =

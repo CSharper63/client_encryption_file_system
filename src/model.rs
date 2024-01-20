@@ -21,6 +21,15 @@ pub struct DataAsset {
     pub status: Option<DataStatus>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Sharing {
+    #[serde(with = "base58")]
+    pub key: Option<Vec<u8>>,
+    pub entity_uid: String, // shared entity
+    pub owner_id: String,   // owner that shared the entity
+    pub user_id: String,    // User id I share with
+}
+
 #[serde_as]
 #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct FsEntity {
@@ -34,6 +43,13 @@ pub struct FsEntity {
     pub entity_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<DataAsset>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PublicKeyMaterial {
+    #[serde(with = "base58")]
+    pub public_key: Option<Vec<u8>>,
+    pub owner_id: Option<String>,
 }
 
 impl FsEntity {
@@ -229,8 +245,8 @@ pub struct User {
     #[serde(with = "base58")]
     pub public_key: Option<Vec<u8>>,
     pub private_key: DataAsset,
-    pub shared_to_others: Option<Vec<String>>,
-    pub shared_to_me: Option<Vec<String>>,
+    pub shared_to_others: Option<Vec<Sharing>>,
+    pub shared_to_me: Option<Vec<Sharing>>,
 }
 
 impl User {
@@ -268,6 +284,14 @@ impl User {
             shared_to_me: Some(Vec::new()),
             shared_to_others: Some(Vec::new()),
         }
+    }
+
+    pub fn find_sharing_by_entity_id(&self, entity_id: &str) -> Option<Sharing> {
+        self.shared_to_others
+            .as_ref()?
+            .iter()
+            .find(|sharing| sharing.entity_uid == entity_id)
+            .cloned()
     }
 
     /// Use to rebuild symmetric and auth key from the password and the salt obtained by the api
@@ -321,8 +345,8 @@ impl User {
     }
 
     pub fn decrypt(self, password: &str, salt: Option<Vec<u8>>) -> User {
-        println!("before decryption: {}", self.to_string());
-
+        /*         println!("before decryption: {}", self.to_string());
+         */
         // use the fetched salt to generate password hash
         let (password_hash, auth_key) = crypto::hash_password(password, salt.clone());
 
@@ -362,8 +386,8 @@ impl User {
                 nonce: self.private_key.nonce.clone(),
                 status: Some(DataStatus::Decrypted),
             },
-            shared_to_me: Some(Vec::new()),
-            shared_to_others: Some(Vec::new()),
+            shared_to_me: self.shared_to_me,
+            shared_to_others: self.shared_to_others,
         }
     }
 

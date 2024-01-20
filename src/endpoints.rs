@@ -2,7 +2,7 @@ use reqwest::{Client, StatusCode};
 
 use model::User;
 
-use crate::model::{self, FsEntity};
+use crate::model::{self, FsEntity, PublicKeyMaterial, Sharing};
 
 static URL: &str = "http://localhost:8000";
 
@@ -276,15 +276,18 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     }
 }
 
-pub async fn get_public_key(auth_token: &str, username: &str) -> Option<Vec<u8>> {
+pub async fn get_public_key_with_uid(
+    auth_token: &str,
+    username: &str,
+) -> Option<PublicKeyMaterial> {
     let client = Client::new();
 
     match client
         .get(format!(
-            "{}/auth/get_public_key?username={}?auth_token={}",
+            "{}/auth/get_public_key?auth_token={}&username={}",
             URL.to_string(),
+            auth_token,
             username,
-            auth_token
         ))
         .send()
         .await
@@ -292,10 +295,11 @@ pub async fn get_public_key(auth_token: &str, username: &str) -> Option<Vec<u8>>
         Ok(res) => match res.status() {
             StatusCode::OK => {
                 // the public key is encoded in base64
-                let b64_public_key = res.text().await.unwrap();
-                let public_key = bs58::decode(b64_public_key).into_vec().unwrap();
+                let pk_material = res.text().await.unwrap();
 
-                return Some(public_key);
+                let decoded: PublicKeyMaterial = serde_json::from_str(&pk_material).unwrap();
+
+                return Some(decoded);
             }
             _ => {
                 // any other ->
@@ -316,25 +320,52 @@ pub async fn get_public_key(auth_token: &str, username: &str) -> Option<Vec<u8>>
     }
 }
 
-pub async fn share_entity(
-    auth_token: &str,
-    path_2_share: &str,
-    username: &str,
-    encrypted_key: Vec<u8>,
-) -> Option<String> {
+pub async fn share_entity(auth_token: &str, share: &Sharing) -> Option<String> {
     let client = Client::new();
 
-    let b64_encrypted_key = bs58::encode(encrypted_key).into_string();
+    match client
+        .post(format!(
+            "{}/share?auth_token={}",
+            URL.to_string(),
+            auth_token,
+        ))
+        .json(share)
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                return Some(res.text().await.unwrap());
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
+pub async fn revoke_share(auth_token: &str, share: &Sharing) -> Option<String> {
+    let client = Client::new();
 
     match client
-        .get(format!(
-            "{}/share/username={}?auth_token={}?path={}?shared_key={}",
+        .post(format!(
+            "{}/revoke_share?auth_token={}",
             URL.to_string(),
-            username,
             auth_token,
-            path_2_share,
-            b64_encrypted_key
         ))
+        .json(share)
         .send()
         .await
     {
