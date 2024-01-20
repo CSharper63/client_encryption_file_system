@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use argon2::{
     password_hash::{rand_core::RngCore, SaltString},
     Argon2,
@@ -6,7 +8,11 @@ use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,
 };
-use rsa::{pkcs8, RsaPrivateKey, RsaPublicKey};
+use rsa::{
+    pkcs8::{self, DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
+    sha2::Sha256,
+    Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+};
 
 use crate::model::{DataAsset, DataStatus};
 
@@ -126,17 +132,38 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
 /// Use to generate asymmetric public/private keys-pair using RSA-OAEP 4096
 pub fn generate_asymm_keys() -> (Vec<u8>, Vec<u8>) {
     let mut rng = OsRng;
-    let bits = 256; // !! for test purposes only
+    let bits = 4096; // !! for test purposes only
     let priv_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
-    let private_key_bytes = pkcs8::EncodePrivateKey::to_pkcs8_der(&priv_key)
-        .unwrap()
-        .as_bytes()
-        .to_vec();
     let pub_key = RsaPublicKey::from(&priv_key);
-    let public_key_bytes = pkcs8::EncodePublicKey::to_public_key_der(&pub_key)
-        .unwrap()
-        .as_bytes()
-        .to_vec();
+    let secret = priv_key.to_pkcs8_der().unwrap();
+    let public = pub_key.to_public_key_der().unwrap();
 
-    (private_key_bytes, public_key_bytes)
+    (secret.to_bytes().to_vec(), public.to_vec())
+}
+
+/// Use RSA-OAEP to encrypt the data using the public key
+pub fn encrypt_asymm(public_key: Vec<u8>, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    let padding = Oaep::new::<Sha256>();
+
+    let public_key =
+        RsaPublicKey::from_public_key_der(&public_key).expect("failed to decode public key");
+
+    let mut rng = OsRng;
+    let encrypted_data = public_key.encrypt(&mut rng, padding, &data)?;
+
+    Ok(encrypted_data)
+}
+
+/// Use RSA-OAEP to decrypt the data using the private key
+pub fn decrypt_asymm(
+    private_key_bytes: Vec<u8>,
+    encrypted_data: Vec<u8>,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    let padding = Oaep::new::<Sha256>();
+
+    let priv_key = RsaPrivateKey::from_pkcs8_der(&private_key_bytes)?;
+
+    let decrypted_data: Vec<u8> = priv_key.decrypt(padding, &encrypted_data)?;
+
+    Ok(decrypted_data)
 }
