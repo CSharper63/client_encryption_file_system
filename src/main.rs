@@ -166,18 +166,9 @@ async fn main() {
         let mut selected_dir: FsEntity = Default::default();
         let mut items: Vec<(&str, &str, &str)> = Vec::default();
 
-        items.push(("create_dir", "Create a dir", ""));
-        items.push(("add_file", "Add file", ""));
-        items.push(("list_content", "List content", ""));
-        if !parent_id.is_empty() {
-            items.push(("share_entity", "Share the element", ""));
-        }
-        items.push(("revoke_share", "Revoke sharing", ""));
-
-        items.push(("change_password", "Change password", ""));
-        items.push(("sign_out", "Sign out", ""));
-
         let mut navigtion_in_owned_elem = false;
+
+        let mut current_is_shared = false;
 
         // items.push(("back", "Back", ""));
 
@@ -185,23 +176,29 @@ async fn main() {
             log::info(format!(" -> 📂 You are here: /{}", current_path)).unwrap();
 
             // if we want o modifiy the tree -> modify dirs_refs_to_process
+            items.clear();
 
-            if !parent_id.clone().is_empty() && !items.contains(&("back", "Back", "")) {
-                items.push(("back", "Back", ""));
+            // Ajouter les éléments standards à la liste
+            items.push(("create_dir", "Create a dir", ""));
+            items.push(("add_file", "Add file", ""));
+            items.push(("list_content", "List content", ""));
+            items.push(("change_password", "Change password", ""));
+            items.push(("sign_out", "Sign out", ""));
 
-                if navigtion_in_owned_elem {
-                    if !items.contains(&("share_entity", "Share the element", "")) {
-                        items.push(("share_entity", "Share the element", ""));
-                    }
+            if !parent_id.is_empty() {
+                if current_is_shared {
+                    items.push(("revoke_share", "Revoke sharing", ""));
                 } else {
-                    items.retain(|item| item != &("share_entity", "Share the element", ""));
+                    items.push(("share_entity", "Share the element", ""));
                 }
+
+                items.push(("back", "Back", ""));
+            } else {
+                items.push(("list_shared_with_me", "List all shared with me", ""));
             }
 
-            let selected: &str = select("What about now ?")
-                .items(items.as_ref())
-                .interact()
-                .unwrap();
+            // Afficher la liste pour la sélection par l'utilisateur
+            let selected: &str = select("What about now ?").items(&items).interact().unwrap();
 
             let symm_key = if parent_id.is_empty() {
                 my_user.as_ref().unwrap().master_key.clone().asset.unwrap()
@@ -321,13 +318,11 @@ async fn main() {
                         } else {
                             String::from("💾") // not really a file but fancy
                         };
-
-                        let is_shared = my_user
+                        current_is_shared = my_user
                             .as_ref()
                             .unwrap()
                             .is_entity_shared(dir.uid.clone().unwrap().as_str());
-                        println!("C'est shared: {}", is_shared);
-                        let shared_status = if is_shared { "Shared" } else { "" };
+                        let shared_status = if current_is_shared { "Shared" } else { "" };
 
                         items.push((
                             dir.uid.clone().unwrap(),
@@ -392,12 +387,120 @@ async fn main() {
 
                     break;
                 }
-                "list_shared_with_me" => {
 
-                    // about share ->
-                    // if its a dir, we must add the whole tree children to authorized list access to the person I share with.
-                    // struct will look like -> {"shared_item_uid":"encrypted key"} -> server must verify that is not a root folder,
-                    // and must delete the parent id before the sending the shared to the user
+                // about share ->
+                // if its a dir, we must add the whole tree children to authorized list access to the person I share with.
+                // struct will look like -> {"shared_item_uid":"encrypted key"} -> server must verify that is not a root folder,
+                // and must delete the parent id before the sending the shared to the user
+                "list_shared_with_me" => {
+                    if let Some(shared_to_me) = my_user.as_ref().unwrap().shared_to_me.as_ref() {
+                        if shared_to_me.is_empty() {
+                            log::info("No items have been shared with you").unwrap();
+                        } else {
+                            log::info("Items shared with you:").unwrap();
+                            for sharing in shared_to_me {
+                                // Déchiffrer la clé partagée
+                                let decrypted_key = match &sharing.key {
+                                    Some(key) => {
+                                        match crypto::decrypt_asymm(
+                                            key.to_vec(),
+                                            my_user
+                                                .as_ref()
+                                                .unwrap()
+                                                .private_key
+                                                .asset
+                                                .as_ref()
+                                                .unwrap()
+                                                .to_vec(),
+                                        ) {
+                                            Ok(element_key) => {
+                                                let fetched_dirs = endpoints::get_shared_children(
+                                                    &jwt.as_ref().clone().unwrap(),
+                                                    &sharing,
+                                                )
+                                                .await;
+                                                let mut items: Vec<(String, String, &str)> =
+                                                    Vec::default(); // will contains the item to select
+                                                let mut decrypted_dirs: Vec<FsEntity> =
+                                                    Vec::default(); // will contains the decrypted dirs
+
+                                                for dir in fetched_dirs.clone().unwrap().iter_mut()
+                                                {
+                                                    let decrypted_dir = if parent_id.is_empty() {
+                                                        // if parent_id is empty it means we must decrypt with the user master key
+                                                        dir.clone().decrypt(element_key.clone())
+                                                    } else {
+                                                        // else decrypt with the parent key
+                                                        dir.clone().decrypt(
+                                                            selected_dir.key.clone().asset.unwrap(),
+                                                        )
+                                                    };
+
+                                                    decrypted_dirs.push(decrypted_dir.clone());
+
+                                                    let name = decrypted_dir.clone().show_name();
+
+                                                    let icon = if dir.clone().entity_type == "dir" {
+                                                        String::from("📂")
+                                                    } else {
+                                                        String::from("💾") // not really a file but fancy
+                                                    };
+
+                                                    items.push((
+                                                        dir.uid.clone().unwrap(),
+                                                        format!("{} {}", icon, name),
+                                                        "",
+                                                    ));
+                                                }
+
+                                                parent_id = cliclack::select("Pick a folder")
+                                                    .items(items.as_ref())
+                                                    .interact()
+                                                    .unwrap();
+
+                                                selected_dir = decrypted_dirs
+                                                    .iter()
+                                                    .find(|d| d.uid.clone().unwrap() == parent_id)
+                                                    .unwrap()
+                                                    .clone();
+
+                                                let encry_selected_dir =
+                                                    fetched_dirs.as_ref().unwrap().iter().find(
+                                                        |d| d.uid.clone().unwrap() == parent_id,
+                                                    );
+
+                                                current_path = add_to_path(
+                                                    &current_path,
+                                                    &selected_dir.clone().show_name(),
+                                                );
+                                                encrypted_path = add_to_path(
+                                                    &encrypted_path,
+                                                    &&encry_selected_dir.unwrap().encrypted_name(),
+                                                );
+                                            }
+                                            Err(_) => {
+                                                log::error("Failed to decrypt shared key").unwrap();
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        log::error("No key available for shared item").unwrap();
+                                        continue;
+                                    }
+                                };
+
+                                // Afficher les détails du partage après déchiffrement
+                                log::info(format!(
+                                    "Entity UID: {}, Shared by User ID: {}, Decrypted Key: {:?}",
+                                    sharing.entity_uid, sharing.user_id, decrypted_key
+                                ))
+                                .unwrap();
+                            }
+                        }
+                    } else {
+                        log::info("No items have been shared with you").unwrap();
+                    }
                 }
 
                 "share_entity" => {
@@ -442,6 +545,7 @@ async fn main() {
                                 .as_mut()
                                 .unwrap()
                                 .share(&element_expected_2_be_shared);
+                            current_is_shared = true;
                         }
                         Err(e) => {
                             log::error(format!("Encryption error: {}", e));
@@ -465,6 +569,7 @@ async fn main() {
                             .as_mut()
                             .unwrap()
                             .revoke_share(selected_dir.clone().uid.unwrap().as_str());
+                        current_is_shared = false;
 
                         log::success("The share of this item has been revoked successfully");
                     } else {

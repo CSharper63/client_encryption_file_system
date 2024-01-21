@@ -504,22 +504,25 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
     }
 }
 
-/* pub async fn update_tree(auth_token: &str, updated_tree: &RootTree) -> Option<String> {
+pub async fn get_shared_children(auth_token: &str, share: &Sharing) -> Option<Vec<FsEntity>> {
     let client = Client::new();
 
     match client
-        .post(format!(
-            "{}/tree/update?auth_token={}",
+        .get(format!(
+            "{}/dirs/get_shared_children?auth_token={}",
             URL.to_string(),
             auth_token,
         ))
-        .json(updated_tree)
+        .json(share)
         .send()
         .await
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
-                return Some(res.text().await.unwrap());
+                let list_dirs_str: Vec<FsEntity> =
+                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
+
+                return Some(list_dirs_str);
             }
             _ => {
                 // any other ->
@@ -538,4 +541,4 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
             None
         }
     }
-} */
+}
