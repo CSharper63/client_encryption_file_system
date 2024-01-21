@@ -504,14 +504,19 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
     }
 }
 
-pub async fn get_shared_children(auth_token: &str, share: &Sharing) -> Option<Vec<FsEntity>> {
+pub async fn get_shared_children(
+    auth_token: &str,
+    share: &Sharing,
+    sub_id: &str,
+) -> Option<Vec<FsEntity>> {
     let client = Client::new();
 
     match client
         .get(format!(
-            "{}/dirs/get_shared_children?auth_token={}",
+            "{}/dirs/get_shared_children?auth_token={}&sub_entity_id={}",
             URL.to_string(),
             auth_token,
+            sub_id
         ))
         .json(share)
         .send()
