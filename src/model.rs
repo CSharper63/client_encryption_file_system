@@ -103,22 +103,23 @@ impl FsEntity {
 
     // symm key used is the parent dir key
     pub fn encrypt(self, parent_key: Vec<u8>) -> FsEntity {
-        println!("dir before encryption: {}", self.clone().to_string());
-
+        /*         println!("dir before encryption: {}", self.clone().to_string());
+         */
         // if the dir has already been encrypted a time, use the nonce to reencrypt
         let encrypted_name = crypto::encrypt(
             self.key.clone().asset.unwrap(),
             self.name.asset,
             self.name.nonce,
         );
-        println!("Name has been encrypted");
+        /*         println!("Name has been encrypted");
+         */
         let encrypted_key = crypto::encrypt(
             parent_key.clone(),
             self.key.clone().asset,
             self.key.clone().nonce,
         );
-        println!("Dir key has been encrypted");
-
+        /*         println!("Dir key has been encrypted");
+         */
         let mut encrypted_content: Option<DataAsset> = None;
 
         if self.entity_type == "file" {
@@ -144,8 +145,8 @@ impl FsEntity {
 
     // happends when fetching tree from api so must be decrypted
     pub fn decrypt(self, parent_key: Vec<u8>) -> FsEntity {
-        println!("before decrypt: {}", self.clone().to_string());
-
+        /*         println!("before decrypt: {}", self.clone().to_string());
+         */
         // decrypt the entity key to decrypt the rest
         let decrypted_key = crypto::decrypt(
             parent_key.clone(),
@@ -163,7 +164,8 @@ impl FsEntity {
         .unwrap();
 
         let decrypted_content = if self.entity_type == "file" {
-            println!("it s a file");
+            /*             println!("it s a file");
+             */
             Some(DataAsset {
                 asset: crypto::decrypt(
                     decrypted_key.clone(),
@@ -294,6 +296,42 @@ impl User {
             .cloned()
     }
 
+    pub fn is_entity_shared(&self, entity_id: &str) -> bool {
+        if let Some(shared_to_others) = &self.shared_to_others {
+            if shared_to_others
+                .iter()
+                .any(|sharing| sharing.entity_uid == entity_id)
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn revoke_share(&mut self, entity_id: &str) {
+        if let Some(shared_to_others) = &mut self.shared_to_others {
+            shared_to_others.retain(|sharing| sharing.entity_uid != entity_id);
+        }
+    }
+
+    pub fn share(&mut self, sharing: &Sharing) {
+        if self.shared_to_others.is_none() {
+            self.shared_to_others = Some(Vec::new());
+        }
+
+        // Ajouter le partage à la liste
+        if let Some(shared_to_others) = &mut self.shared_to_others {
+            // Vérifier si le partage existe déjà pour éviter les doublons
+            if !shared_to_others
+                .iter()
+                .any(|s| s.entity_uid == sharing.entity_uid)
+            {
+                shared_to_others.push(sharing.clone());
+            }
+        }
+    }
+
     /// Use to rebuild symmetric and auth key from the password and the salt obtained by the api
     pub fn rebuild_secret(password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
         // generate the hash from password, give the hash and the salt
@@ -314,13 +352,13 @@ impl User {
         // encrypt the master and asymm private keys using symmetric key
         let encrypted_master_key =
             crypto::encrypt(symmetric_key.clone(), mk.clone(), self.master_key.nonce);
-        println!("Master key has been encrypted");
-
+        /*         println!("Master key has been encrypted");
+         */
         // TODO must be encrypted with the master key and NOT THE SYMMETRIC KEY, EXPECTED TO CHANGE IN THE FUTURE
         let encrypted_private_key =
             crypto::encrypt(mk.unwrap(), self.private_key.asset, self.private_key.nonce);
-        println!("Private key has been encrypted");
-
+        /*         println!("Private key has been encrypted");
+         */
         // this use is encrypted
         User {
             uid: self.uid,
@@ -344,7 +382,7 @@ impl User {
         }
     }
 
-    pub fn decrypt(self, password: &str, salt: Option<Vec<u8>>) -> User {
+    pub fn decrypt(mut self, password: &str, salt: Option<Vec<u8>>) -> User {
         /*         println!("before decryption: {}", self.to_string());
          */
         // use the fetched salt to generate password hash
@@ -368,6 +406,19 @@ impl User {
             self.private_key.asset,
         )
         .unwrap();
+
+        if let Some(shared_to_me) = &mut self.shared_to_me {
+            for sharing in shared_to_me.iter_mut() {
+                if let Some(encrypted_key) = &sharing.key {
+                    // decrypt the entity key
+                    let decrypted_key =
+                        crypto::decrypt_asymm(user_private_key.clone(), encrypted_key.to_vec())
+                            .expect("failed to decrypt sharing key");
+                    // update the key
+                    sharing.key = Some(decrypted_key);
+                }
+            }
+        }
 
         User {
             uid: self.uid,
@@ -393,23 +444,23 @@ impl User {
 
     pub fn update_password(&self, old_password: &str, new_password: &str) -> Option<User> {
         /* if self.status == DataStatus::Decrypted { */
-        println!("{}", self.to_string());
+        /*       println!("{}", self.to_string()); */
         // must verify that the password is good
         let (auth_key, symm_key) = User::rebuild_secret(old_password, self.clear_salt.clone());
-        println!(
+        /*         println!(
             "{}\n{}",
             bs58::encode(auth_key.clone()).into_string(),
             bs58::encode(self.auth_key.clone().unwrap()).into_string(),
-        );
+        ); */
 
         if symm_key == self.symmetric_key {
             let (hash, salt) = crypto::hash_password(new_password, None);
-            println!("password hashed");
-
+            /*             println!("password hashed");
+             */
             // user kdf to derive auth and symm key
             let (auth_key, symm_key) = crypto::kdf(hash);
-            println!("Key derived");
-
+            /*             println!("Key derived");
+             */
             let master_key = DataAsset {
                 asset: self.master_key.clone().asset,
                 nonce: None,
@@ -434,8 +485,8 @@ impl User {
                 shared_to_others: self.shared_to_others.clone(),
             })
         } else {
-            println!("invalid secret");
-
+            /*             println!("invalid secret");
+             */
             // invalid password
             None
         }

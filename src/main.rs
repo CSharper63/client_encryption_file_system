@@ -322,10 +322,19 @@ async fn main() {
                             String::from("💾") // not really a file but fancy
                         };
 
-                        items.push((dir.uid.clone().unwrap(), format!("{} {}", icon, name), ""));
-                    }
+                        let is_shared = my_user
+                            .as_ref()
+                            .unwrap()
+                            .is_entity_shared(dir.uid.clone().unwrap().as_str());
+                        println!("C'est shared: {}", is_shared);
+                        let shared_status = if is_shared { "Shared" } else { "" };
 
-                    println!("I am done at this point");
+                        items.push((
+                            dir.uid.clone().unwrap(),
+                            format!("{} {}", icon, name),
+                            shared_status,
+                        ));
+                    }
 
                     parent_id = cliclack::select("Pick a folder")
                         .items(items.as_ref())
@@ -370,12 +379,6 @@ async fn main() {
                     if updated.clone().is_none() {
                         log::error(format!("Invalid password, please re-sign in")).unwrap();
                     } else {
-                        println!(
-                            "master key: {}",
-                            bs58::encode(updated.clone().unwrap().master_key.asset.unwrap())
-                                .into_string()
-                        );
-
                         let new_encrypted_user = updated.unwrap().encrypt();
 
                         endpoints::update_password(
@@ -417,7 +420,6 @@ async fn main() {
                         endpoints::get_public_key_with_uid(&jwt.as_ref().unwrap(), &username).await;
 
                     // encrypt the dir key with the user public key
-
                     match crypto::encrypt_asymm(
                         pb_mat.clone().unwrap().public_key.unwrap(),
                         selected_dir.key.asset.clone().unwrap(),
@@ -435,6 +437,11 @@ async fn main() {
                                 &element_expected_2_be_shared,
                             )
                             .await;
+
+                            my_user
+                                .as_mut()
+                                .unwrap()
+                                .share(&element_expected_2_be_shared);
                         }
                         Err(e) => {
                             log::error(format!("Encryption error: {}", e));
@@ -442,7 +449,6 @@ async fn main() {
                     }
                 }
                 "revoke_share" => {
-                    println!("{}", selected_dir.clone().uid.unwrap().as_str());
                     let share_2_revoke = my_user
                         .as_ref()
                         .unwrap()
@@ -454,6 +460,12 @@ async fn main() {
                             share_2_revoke.as_ref().unwrap(),
                         )
                         .await;
+
+                        my_user
+                            .as_mut()
+                            .unwrap()
+                            .revoke_share(selected_dir.clone().uid.unwrap().as_str());
+
                         log::success("The share of this item has been revoked successfully");
                     } else {
                         log::warning("This item is not shared yet");
