@@ -4,11 +4,11 @@ use std::ops::Deref;
 use std::path::Path;
 
 use cliclack::input;
+use cliclack::intro;
 use cliclack::log;
 use cliclack::password;
 use cliclack::select;
 use cliclack::spinner;
-use cliclack::{intro, outro};
 use model::Sharing;
 use model::User;
 
@@ -85,6 +85,7 @@ async fn main() {
 
                 // Rebuild the secret
                 while jwt.as_ref().is_none() {
+                    spinner.start("Verifying your account");
                     let (auth_key, _) =
                         User::rebuild_secret(&usr_password.clone(), Some(salt.clone()));
 
@@ -155,8 +156,6 @@ async fn main() {
         ))
         .unwrap();
 
-        /*         println!("LOGGED USER:  {}", my_user.as_ref().unwrap().to_string());
-         */
         // make a loop to show the tree
         let mut current_path: String = "".to_string(); // current path when navigate over the tree
         let mut encrypted_path: String = "".to_string();
@@ -398,134 +397,135 @@ async fn main() {
                             log::info("No items have been shared with you").unwrap();
                         } else {
                             log::info("Items shared with you:").unwrap();
+
+                            /*  loop { */
                             let mut parent_id = "".to_string();
-                            let mut child_id = "".to_string();
+
+                            let mut selected_shared: Option<Sharing> = None;
+
+                            /* if selected_shared.is_some() {
+                                fetched_dirs = endpoints::get_shared_children(
+                                    &jwt.as_ref().clone().unwrap(),
+                                    &selected_shared.unwrap(),
+                                    child_id.clone().as_str(),
+                                )
+                                .await;
+                            } */
 
                             loop {
-                                for sharing in shared_to_me {
-                                    let decrypted_key = match &sharing.key {
-                                        Some(key) => {
-                                            match crypto::decrypt_asymm(
-                                                key.to_vec(),
-                                                my_user
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .private_key
-                                                    .asset
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .to_vec(),
-                                            ) {
-                                                Ok(element_key) => {
-                                                    let fetched_dirs =
-                                                        endpoints::get_shared_children(
-                                                            &jwt.as_ref().clone().unwrap(),
-                                                            &sharing,
-                                                            child_id.as_str(),
-                                                        )
-                                                        .await;
-                                                    let mut items: Vec<(String, String, &str)> =
-                                                        Vec::default(); // will contains the item to select
-                                                    let mut decrypted_dirs: Vec<FsEntity> =
-                                                        Vec::default(); // will contains the decrypted dirs
+                                let mut items: Vec<(String, String, &str)> = Vec::default(); // will contains the item to select
+                                let mut decrypted_dirs: Vec<FsEntity> = Vec::default(); // will contains the decrypted dirs
+                                                                                        // it means we are in the root, so must list all shared to dig in
+                                if selected_shared.is_none() {
+                                    for sharing in shared_to_me {
+                                        let encrypted_dir = endpoints::get_shared_entity(
+                                            jwt.as_ref().unwrap(),
+                                            sharing,
+                                        )
+                                        .await;
+                                        let decrypted_dir = encrypted_dir
+                                            .unwrap()
+                                            .decrypt_from_dir_key(sharing.clone().key.unwrap());
 
-                                                    for dir in
-                                                        fetched_dirs.clone().unwrap().iter_mut()
-                                                    {
-                                                        let decrypted_dir = if parent_id.is_empty()
-                                                        {
-                                                            // if parent_id is empty it means we must decrypt with the user master key
-                                                            dir.clone().decrypt(element_key.clone())
-                                                        } else {
-                                                            // else decrypt with the parent key
-                                                            dir.clone().decrypt(
-                                                                selected_dir
-                                                                    .key
-                                                                    .clone()
-                                                                    .asset
-                                                                    .unwrap(),
-                                                            )
-                                                        };
+                                        let name = decrypted_dir.clone().show_name();
 
-                                                        decrypted_dirs.push(decrypted_dir.clone());
+                                        let icon = if decrypted_dir.clone().entity_type == "dir" {
+                                            String::from("📂")
+                                        } else {
+                                            String::from("💾") // not really a file but fancy
+                                        };
 
-                                                        let name =
-                                                            decrypted_dir.clone().show_name();
+                                        items.push((
+                                            decrypted_dir.uid.clone().unwrap(),
+                                            format!("{} {}", icon, name),
+                                            "",
+                                        ));
 
-                                                        let icon = if dir.clone().entity_type
-                                                            == "dir"
-                                                        {
-                                                            String::from("📂")
-                                                        } else {
-                                                            String::from("💾") // not really a file but fancy
-                                                        };
+                                        decrypted_dirs.push(decrypted_dir);
+                                    }
+                                    // else we are in the share
+                                } else {
+                                    // must get the children from the selected sharing
+                                    let fetched_dirs = endpoints::get_shared_children(
+                                        &jwt.as_ref().clone().unwrap(),
+                                        selected_shared.as_ref().unwrap(),
+                                        parent_id.as_str(),
+                                    )
+                                    .await;
 
-                                                        items.push((
-                                                            dir.uid.clone().unwrap(),
-                                                            format!("{} {}", icon, name),
-                                                            "",
-                                                        ));
-                                                    }
+                                    println!(
+                                        "GET INTO {}{}",
+                                        parent_id.as_str(),
+                                        fetched_dirs.clone().unwrap().len()
+                                    );
 
-                                                    if parent_id.is_empty() {
-                                                        parent_id =
-                                                            cliclack::select("Pick a folder")
-                                                                .items(items.as_ref())
-                                                                .interact()
-                                                                .unwrap();
-                                                    } else {
-                                                        child_id =
-                                                            cliclack::select("Pick a folder")
-                                                                .items(items.as_ref())
-                                                                .interact()
-                                                                .unwrap();
-                                                    }
+                                    for dir in fetched_dirs.clone().unwrap().iter_mut() {
+                                        let decrypted_dir = if parent_id.is_empty() {
+                                            // if parent_id is empty it means are in the top of the share tree
+                                            dir.clone().decrypt(
+                                                selected_shared.clone().unwrap().key.unwrap(),
+                                            )
+                                        } else {
+                                            // else decrypt with the parent key
+                                            dir.clone()
+                                                .decrypt(selected_dir.key.clone().asset.unwrap())
+                                        };
 
-                                                    selected_dir = decrypted_dirs
-                                                        .iter()
-                                                        .find(|d| {
-                                                            d.uid.clone().unwrap() == parent_id
-                                                        })
-                                                        .unwrap()
-                                                        .clone();
+                                        decrypted_dirs.push(decrypted_dir.clone());
 
-                                                    let encry_selected_dir =
-                                                        fetched_dirs.as_ref().unwrap().iter().find(
-                                                            |d| d.uid.clone().unwrap() == parent_id,
-                                                        );
+                                        let name = decrypted_dir.clone().show_name();
 
-                                                    current_path = add_to_path(
-                                                        &current_path,
-                                                        &selected_dir.clone().show_name(),
-                                                    );
-                                                    encrypted_path = add_to_path(
-                                                        &encrypted_path,
-                                                        &&encry_selected_dir
-                                                            .unwrap()
-                                                            .encrypted_name(),
-                                                    );
-                                                }
-                                                Err(_) => {
-                                                    log::error("Failed to decrypt shared key")
-                                                        .unwrap();
-                                                    continue;
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            log::error("No key available for shared item").unwrap();
-                                            continue;
-                                        }
-                                    };
+                                        let icon = if dir.clone().entity_type == "dir" {
+                                            String::from("📂")
+                                        } else {
+                                            String::from("💾") // not really a file but fancy
+                                        };
 
-                                    // Afficher les détails du partage après déchiffrement
-                                    log::info(format!(
-                                        "Entity UID: {}, Shared by User ID: {}, Decrypted Key: {:?}",
-                                        sharing.entity_uid, sharing.user_id, decrypted_key
-                                    ))
-                                    .unwrap();
+                                        items.push((
+                                            dir.uid.clone().unwrap(),
+                                            format!("{} {}", icon, name),
+                                            "",
+                                        ));
+                                    }
                                 }
+
+                                // the selected folder will be now the current parent
+                                parent_id = cliclack::select("Pick a folder")
+                                    .items(items.as_ref())
+                                    .interact()
+                                    .unwrap();
+
+                                // contains the selected shared -> so we will dig into is tree
+                                if selected_shared.is_none() {
+                                    // we must keep the link to the parent shared
+                                    selected_shared = Some(
+                                        shared_to_me
+                                            .iter()
+                                            .find(|d| d.entity_uid.clone() == parent_id)
+                                            .unwrap()
+                                            .clone(),
+                                    );
+                                }
+
+                                // the current dir matching with the sharing
+                                selected_dir = decrypted_dirs
+                                    .iter()
+                                    .find(|d| d.uid.clone().unwrap() == parent_id)
+                                    .unwrap()
+                                    .clone();
+                                current_path =
+                                    add_to_path(&current_path, &selected_dir.show_name());
+                                decrypted_dirs.clear();
                             }
+
+                            /*     selected_dir = current_path =
+                                                           add_to_path(&current_path, &selected_dir.clone().show_name());
+                                                       encrypted_path = add_to_path(
+                                                           &encrypted_path,
+                                                           &&encry_selected_dir.unwrap().encrypted_name(),
+                                                       );
+                            */
+                            /*  } */
                         }
                     } else {
                         log::info("No items have been shared with you").unwrap();

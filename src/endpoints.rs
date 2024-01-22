@@ -549,3 +549,42 @@ pub async fn get_shared_children(
         }
     }
 }
+
+pub async fn get_shared_entity(auth_token: &str, share: &Sharing) -> Option<FsEntity> {
+    let client = Client::new();
+
+    match client
+        .get(format!(
+            "{}/get_shared_entity?auth_token={}",
+            URL.to_string(),
+            auth_token,
+        ))
+        .json(share)
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                let fetched_dir: FsEntity =
+                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
+
+                return Some(fetched_dir);
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}

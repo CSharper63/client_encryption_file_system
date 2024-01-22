@@ -181,7 +181,7 @@ impl FsEntity {
 
         FsEntity {
             uid: self.uid,
-            parent_id: None,
+            parent_id: self.parent_id,
             path: self.path,
             entity_type: self.entity_type,
             content: decrypted_content,
@@ -192,6 +192,54 @@ impl FsEntity {
             },
             key: DataAsset {
                 asset: Some(decrypted_key),
+                nonce: self.key.nonce.clone(),
+                status: Some(DataStatus::Decrypted),
+            },
+        }
+    }
+
+    pub fn decrypt_from_dir_key(self, dir_key: Vec<u8>) -> FsEntity {
+        /*         println!("before decrypt: {}", self.clone().to_string());
+         */
+        // decrypt the entity key to decrypt the rest
+
+        // decrpyted with own key
+        let decrypted_name = crypto::decrypt(
+            dir_key.clone(),
+            self.name.nonce.clone(),
+            self.name.clone().asset,
+        )
+        .unwrap();
+
+        let decrypted_content = if self.entity_type == "file" {
+            /*             println!("it s a file");
+             */
+            Some(DataAsset {
+                asset: crypto::decrypt(
+                    dir_key.clone(),
+                    self.content.clone().unwrap().nonce.clone(),
+                    self.content.clone().unwrap().asset,
+                ),
+                nonce: self.content.unwrap().nonce.clone(),
+                status: Some(DataStatus::Decrypted),
+            })
+        } else {
+            None
+        };
+
+        FsEntity {
+            uid: self.uid,
+            parent_id: self.parent_id,
+            path: self.path,
+            entity_type: self.entity_type,
+            content: decrypted_content,
+            name: DataAsset {
+                asset: Some(decrypted_name),
+                nonce: self.name.nonce.clone(),
+                status: Some(DataStatus::Decrypted),
+            },
+            key: DataAsset {
+                asset: Some(dir_key),
                 nonce: self.key.nonce.clone(),
                 status: Some(DataStatus::Decrypted),
             },
@@ -443,7 +491,7 @@ impl User {
         /* if self.status == DataStatus::Decrypted { */
         /*       println!("{}", self.to_string()); */
         // must verify that the password is good
-        let (auth_key, symm_key) = User::rebuild_secret(old_password, self.clear_salt.clone());
+        let (_, symm_key) = User::rebuild_secret(old_password, self.clear_salt.clone());
         /*         println!(
             "{}\n{}",
             bs58::encode(auth_key.clone()).into_string(),
