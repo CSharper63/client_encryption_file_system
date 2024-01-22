@@ -4,7 +4,7 @@ use model::User;
 
 use crate::model::{self, FsEntity, PublicKeyMaterial, Sharing};
 
-static URL: &str = "http://localhost:8000";
+static URL: &str = "https://127.0.0.1:443";
 
 // Todo get back the created user with jwt
 pub async fn sign_up(username: &str, password: &str) -> Option<String> {
@@ -12,6 +12,8 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
 
     // create the user -> contains secret content
     let new_plain_user = User::generate(username, password);
+
+    println!("{}", new_plain_user.clone().to_string());
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
