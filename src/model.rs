@@ -261,7 +261,6 @@ impl User {
 
         // user kdf to derive auth and symm key
         let (auth_key, symm_key) = crypto::kdf(hash);
-
         // TODO handle if already created
         // asymm crypto -> generate public and private keys
         let (private_key, public_key) = crypto::generate_asymm_keys();
@@ -352,13 +351,11 @@ impl User {
         // encrypt the master and asymm private keys using symmetric key
         let encrypted_master_key =
             crypto::encrypt(symmetric_key.clone(), mk.clone(), self.master_key.nonce);
-        /*         println!("Master key has been encrypted");
-         */
+
         // TODO must be encrypted with the master key and NOT THE SYMMETRIC KEY, EXPECTED TO CHANGE IN THE FUTURE
         let encrypted_private_key =
             crypto::encrypt(mk.unwrap(), self.private_key.asset, self.private_key.nonce);
-        /*         println!("Private key has been encrypted");
-         */
+
         // this use is encrypted
         User {
             uid: self.uid,

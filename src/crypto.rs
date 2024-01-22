@@ -4,14 +4,21 @@ use argon2::{
     password_hash::{rand_core::RngCore, SaltString},
     Argon2,
 };
+use blake2::{
+    digest::{Update, VariableOutput},
+    Blake2bVar,
+};
+
+use hkdf::Hkdf;
+use sha2::{Digest, Sha256};
+
 use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,
 };
 use rsa::{
-    pkcs8::{self, DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
-    sha2::Sha256,
-    Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
+    sha2, Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
 use crate::model::{DataAsset, DataStatus};
@@ -114,17 +121,34 @@ pub fn generate_master_key() -> Vec<u8> {
 /// Use to derive keys from input, in this case the input will be a password hash and the derivation will produce an auth key and a symmetric key.
 pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     //TODO concat auto gen salt to the key
-    let mut auth_key = [0u8; 32];
-    let mut symmetric_key = [0u8; 32];
+    const OUTPUT_SIZE: usize = 32;
+    let mut auth_key = [0u8; OUTPUT_SIZE];
+    let mut symmetric_key = [0u8; OUTPUT_SIZE];
 
-    // compute auth key
-    Argon2::default()
-        .hash_password_into(&key_material, b"PI6KXZtYonAI8dc9", &mut auth_key)
-        .unwrap();
-    // compute symmetric key
-    Argon2::default()
-        .hash_password_into(&key_material, b"OG08sRT3j1e0wH5m", &mut symmetric_key)
-        .unwrap();
+    let mut hasher = Blake2bVar::new(OUTPUT_SIZE).unwrap();
+    println!("Blake ok");
+    // salt for auth key
+    hasher.update(&key_material);
+    let mut auth_salt = [0u8; OUTPUT_SIZE];
+    hasher.finalize_variable(&mut auth_salt).unwrap();
+
+    let auth_kdf = Hkdf::<Sha256>::new(Some(&auth_salt), &key_material);
+
+    auth_kdf
+        .expand(b"", &mut auth_key)
+        .expect("32 is a valid length for Sha256 to output");
+
+    // salt for symm key
+    let symm_salt = Sha256::digest(key_material.clone());
+    println!("auth_kdf ok");
+
+    let symm_kdf = Hkdf::<Sha256>::new(Some(&symm_salt), &key_material);
+
+    symm_kdf
+        .expand(b"", &mut symmetric_key)
+        .expect("32 is a valid length for Sha256 to output");
+
+    println!("symm_kdf ok");
 
     (auth_key.to_vec(), symmetric_key.to_vec())
 }
