@@ -2,7 +2,7 @@ use std::error::Error;
 
 use argon2::{
     password_hash::{rand_core::RngCore, SaltString},
-    Argon2,
+    Algorithm, Argon2, Params, Version,
 };
 use blake2::{
     digest::{Update, VariableOutput},
@@ -99,8 +99,18 @@ pub fn hash_password(plain_password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, V
         }
     };
 
+    let params = Params::new(
+        1048576,  // Coût de la mémoire (en kilooctets)
+        3,        // Coût du temps (itérations)
+        1,        // Parallélisme
+        Some(32), // Longueur du sel (en option)
+    )
+    .unwrap();
+
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
     let mut hashed_password = [0u8; 32]; // Can be any desired size
-    Argon2::default() // TODO change Argon2id params
+    argon2 // TODO change Argon2id params
         .hash_password_into(
             plain_password.as_bytes(),
             salt_2_process.as_slice(),
