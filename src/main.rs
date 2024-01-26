@@ -5,6 +5,8 @@ use std::ops::Deref;
 use std::path::Path;
 
 use cliclack::input;
+use std::env;
+
 use cliclack::intro;
 use cliclack::log;
 use cliclack::password;
@@ -21,6 +23,19 @@ pub mod model;
 #[tokio::main]
 async fn main() {
     intro("Welcome to encryption client").unwrap();
+    // make a loop to show the tree
+    let mut current_path: String = "".to_string(); // current path when navigate over the tree
+    let mut encrypted_path: String = "".to_string();
+
+    let mut parent_id: String = "".to_string();
+
+    let mut selected_dir: FsEntity = Default::default();
+    let mut items: Vec<(&str, &str, &str)> = Vec::default();
+
+    let mut current_is_shared = false;
+    let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
+
+    let mut selected_file: FsEntity = Default::default();
     loop {
         let mut jwt: Option<String> = None;
         let mut salt: Option<Vec<u8>> = None;
@@ -159,26 +174,10 @@ async fn main() {
         ))
         .unwrap();
 
-        // make a loop to show the tree
-        let mut current_path: String = "".to_string(); // current path when navigate over the tree
-        let mut encrypted_path: String = "".to_string();
-
-        let mut parent_id: String = "".to_string();
-
-        let mut selected_dir: FsEntity = Default::default();
-        let mut items: Vec<(&str, &str, &str)> = Vec::default();
-
-        let mut navigtion_in_owned_elem = false;
-
-        let mut current_is_shared = false;
-        let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
-
-        let mut selected_file: FsEntity = Default::default();
-
         // items.push(("back", "Back", ""));
 
         loop {
-            log::info(format!(" -> 📂 You are here: /{}", current_path)).unwrap();
+            log::info(format!(" -> 📂 You are here: /{}", current_path.clone())).unwrap();
 
             // if we want o modifiy the tree -> modify dirs_refs_to_process
             items.clear();
@@ -283,7 +282,6 @@ async fn main() {
                         .unwrap();
                 }
                 "list_content" => {
-                    navigtion_in_owned_elem = true;
                     //list all folder by names and uid, then get into, and fetch the child from endpoint
                     let fetched_dirs: Option<Vec<FsEntity>>;
 
@@ -444,11 +442,6 @@ async fn main() {
                             "download" => {
                                 // create the file fetched from the server
                                 //get le contenu du fichier de uid
-
-                                if !Path::new(current_path.clone().as_str()).exists() {
-                                    fs::create_dir_all(current_path.clone().as_str()).unwrap();
-                                }
-
                                 let content = endpoints::get_file(
                                     jwt.as_ref().unwrap(),
                                     selected_file.uid.clone().unwrap().as_str(),
@@ -456,23 +449,18 @@ async fn main() {
                                 )
                                 .await;
 
-                                let download_path =
-                                    format!("{}/{}", current_path, selected_file.show_name());
+                                let decrypted = crypto::decrypt(
+                                    selected_file.key.asset.clone().unwrap(),
+                                    selected_file.content.clone().unwrap().nonce,
+                                    content,
+                                );
 
-                                log::step(format!("Download at: {}", download_path));
-
-                                // it s a file
-                                // create the file
-                                fs::write(
-                                    format!("{}/{}", current_path, selected_file.show_name()),
-                                    content.unwrap(),
+                                save_file_locally(
+                                    selected_file.show_name().clone().as_str(),
+                                    decrypted.unwrap(),
+                                    current_path.clone(),
                                 )
-                                .unwrap();
-                                log::info(format!(
-                                    "Your file has been downloaded from the app root to: {}",
-                                    current_path
-                                ))
-                                .unwrap();
+                                .await;
                             }
                             _ => {}
                         }
@@ -787,4 +775,23 @@ fn pop_from_path(current_path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+async fn save_file_locally(name: &str, content: Vec<u8>, path: String) {
+    // Obtenir le chemin du répertoire courant du programme
+    let current_dir = env::current_dir().unwrap();
+
+    // Construire le chemin vers le dossier souhaité
+    let target_dir = current_dir.join(format!("vault/{}", path));
+
+    // Vérifier si le dossier existe, sinon le créer
+    if !Path::new(&target_dir).exists() {
+        fs::create_dir_all(&target_dir).unwrap();
+    }
+
+    // Construire le chemin complet vers le fichier à enregistrer
+    let file_path = target_dir.join(name);
+
+    // Écrire le contenu dans le fichier
+    fs::write(file_path, content).unwrap();
 }
