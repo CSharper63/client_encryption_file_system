@@ -4,6 +4,7 @@ use cliclack::intro;
 use cliclack::log;
 use cliclack::password;
 use cliclack::select;
+use cliclack::spinner;
 use model::Sharing;
 use model::User;
 use std::env;
@@ -18,8 +19,6 @@ pub mod model;
 #[tokio::main]
 async fn main() {
     intro("Welcome to encryption client").unwrap();
-    // make a loop to show the tree
-
     loop {
         // select if you already got an account or not
 
@@ -46,8 +45,6 @@ async fn main() {
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
         }
 
-        // items.push(("back", "Back", ""));
-
         // Do stuff
         log::info("Bye bye").unwrap();
     }
@@ -69,28 +66,28 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
     let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
 
     loop {
-        log::info(format!(" -> 📂 You are here: /{}", current_path.clone())).unwrap();
+        log::info(format!(" -> 📁 You are here: /{}", current_path.clone())).unwrap();
 
         // if we want o modifiy the tree -> modify dirs_refs_to_process
         items.clear();
 
         // Ajouter les éléments standards à la liste
-        items.push(("create_dir", "Create a dir", ""));
-        items.push(("add_file", "Add file", ""));
-        items.push(("list_content", "List content", ""));
-        items.push(("change_password", "Change password", ""));
-        items.push(("sign_out", "Sign out", ""));
+        items.push(("create_dir", "🆕 Create a dir", ""));
+        items.push(("add_file", "🆕 Add file", ""));
+        items.push(("list_content", "📂 List content", ""));
+        items.push(("change_password", "🔐 Change password", ""));
+        items.push(("sign_out", "🚪 Sign out", ""));
 
         if !parent_id.is_empty() {
             if current_is_shared {
-                items.push(("revoke_share", "Revoke sharing", ""));
+                items.push(("revoke_share", "🔗 Revoke sharing", ""));
             } else {
-                items.push(("share_entity", "Share the element", ""));
+                items.push(("share_entity", "🔗 Share the element", ""));
             }
 
             items.push(("back", "Back", ""));
         } else {
-            items.push(("list_shared_with_me", "List all shared with me", ""));
+            items.push(("list_shared_with_me", "🔗 List all shared with me", ""));
         }
 
         // Afficher la liste pour la sélection par l'utilisateur
@@ -499,12 +496,12 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
                 if share_2_revoke.is_some() {
                     let ok = endpoints::revoke_share(jwt, share_2_revoke.as_ref().unwrap()).await;
-
-                    my_user
-                        .revoke_share(selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str());
-                    current_is_shared = false;
-
-                    log::success("The share of this item has been revoked successfully").unwrap();
+                    if ok.is_some() {
+                        my_user.revoke_share(
+                            selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
+                        );
+                        current_is_shared = false;
+                    }
                 } else {
                     log::warning("This item is not shared yet").unwrap();
                 }
@@ -524,8 +521,6 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 if !parent_id.is_empty() {
                     selected_dir = Some(chain_of_dirs.last().cloned().unwrap());
                 }
-
-                log::error(format!("selected dir: {}", parent_id)).unwrap();
             }
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
         }
@@ -555,30 +550,38 @@ fn get_password_input(prompt: &str) -> String {
 }
 
 async fn save_file_locally(name: &str, content: Vec<u8>, path: String) {
-    // Obtenir le chemin du répertoire courant du programme
+    // get current path
     let current_dir = env::current_dir().unwrap();
 
-    // Construire le chemin vers le dossier souhaité
+    //compute the path
     let target_dir = current_dir.join(format!("vault/{}", path));
-
-    // Vérifier si le dossier existe, sinon le créer
+    // create the tree
     if !Path::new(&target_dir).exists() {
         fs::create_dir_all(&target_dir).unwrap();
     }
-
-    // Construire le chemin complet vers le fichier à enregistrer
+    // join path
     let file_path = target_dir.join(name);
-
-    // Écrire le contenu dans le fichier
-    fs::write(file_path, content).unwrap();
+    let mut spin = spinner();
+    spin.start("Saving file in local...");
+    match fs::write(file_path.clone(), content) {
+        Ok(_) => {
+            spin.stop(format!(
+                "File successfully saved at: {}",
+                file_path.clone().to_string_lossy()
+            ));
+        }
+        Err(_) => {
+            spin.stop(format!(
+                "Unable to save file: {}",
+                file_path.clone().to_string_lossy()
+            ));
+        }
+    };
 }
 
 async fn sign_in() -> Option<(String, User)> {
-    // Get salt and JWT logic here...
-
-    // Assuming salt and JWT retrieval is successful
-    let mut salt: Option<Vec<u8>> = None; // Placeholder for actual salt retrieval
-    let mut jwt: Option<String> = None; // Placeholder for actual JWT retrieval
+    let mut salt: Option<Vec<u8>> = None;
+    let mut jwt: Option<String> = None;
     let mut user: Option<User> = None;
 
     while salt.is_none() || jwt.is_none() || user.is_none() {
@@ -627,7 +630,6 @@ async fn sign_up() -> Option<(String, User)> {
 }
 
 fn get_valid_input(prompt: &str, error_msg: &str) -> String {
-    // Cloner `error_msg` pour que la fermeture capture sa propre copie
     let error_msg = error_msg.to_owned();
 
     input(prompt)
@@ -644,8 +646,6 @@ fn get_valid_input(prompt: &str, error_msg: &str) -> String {
 }
 
 async fn download_decrypted(jwt: &str, file: &FsEntity, owner_id: &str, current_path: &str) {
-    // create the file fetched from the server
-    //get le contenu du fichier de uid
     let content = endpoints::get_file(jwt, file.uid.clone().unwrap().as_str(), owner_id).await;
 
     let decrypted = crypto::decrypt(

@@ -1,5 +1,5 @@
 use cliclack::{
-    log::{self, info},
+    log::{self},
     spinner,
 };
 use reqwest::{Client, StatusCode};
@@ -195,7 +195,7 @@ pub async fn get_user(auth_token: &str) -> Option<User> {
 pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     let client = Client::new();
     let mut spin = spinner();
-    spin.start("Fetching your salt...");
+    spin.start("🧂 Fetching your salt...");
 
     match client
         .get(format!(
@@ -208,7 +208,7 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
-                spin.stop("Salt successfully fetched");
+                spin.stop("🧂 Salt successfully fetched");
                 let clear_salt = res.text().await.unwrap();
                 let salt = bs58::decode(clear_salt).into_vec();
 
