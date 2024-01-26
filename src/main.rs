@@ -1,22 +1,16 @@
-use std::clone;
-use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::ops::Deref;
-use std::path::Path;
-
+use crate::model::FsEntity;
 use cliclack::input;
-use std::env;
-
 use cliclack::intro;
 use cliclack::log;
 use cliclack::password;
 use cliclack::select;
-use cliclack::spinner;
 use model::Sharing;
 use model::User;
-
-use crate::model::FsEntity;
+use std::env;
+use std::fs;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 pub mod crypto;
 pub mod endpoints;
 pub mod model;
@@ -41,7 +35,6 @@ async fn main() {
             "sign_in" => {
                 if let Some((jwt, my_user)) = sign_in().await {
                     navigate_over(my_user, jwt.as_str()).await;
-                } else {
                 }
             }
             // handle new account
@@ -53,8 +46,6 @@ async fn main() {
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
         }
 
-        /*         log::success(format!("Welcome Mr. {}", my_user.clone().username)).unwrap();
-         */
         // items.push(("back", "Back", ""));
 
         // Do stuff
@@ -62,7 +53,10 @@ async fn main() {
     }
 }
 
+// !! can be factorised
 async fn navigate_over(mut my_user: User, jwt: &str) {
+    log::success(format!("Welcome Mr. {}", my_user.clone().username)).unwrap();
+
     let mut current_path: String = "".to_string(); // current path when navigate over the tree
     let mut encrypted_path: String = "".to_string();
 
@@ -74,7 +68,6 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
     let mut current_is_shared = false;
     let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
 
-    let mut selected_file: FsEntity = Default::default();
     loop {
         log::info(format!(" -> 📂 You are here: /{}", current_path.clone())).unwrap();
 
@@ -138,9 +131,6 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
                 let file_name = path.file_name().unwrap().to_str().unwrap();
 
-                /* println!("File name: {}", file_name);
-                println!("Path: {}", encrypted_path); */
-
                 let mut content = Vec::new();
 
                 let _ = File::open(path).unwrap().read_to_end(&mut content);
@@ -159,40 +149,40 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 endpoints::add_file(jwt, &encrypted_file).await.unwrap();
             }
             "list_content" => {
-                //list all folder by names and uid, then get into, and fetch the child from endpoint
-                let fetched_dirs: Option<Vec<FsEntity>>;
+                // Fetch directories or files from the endpoint
+                let fetched_dirs = endpoints::get_children(&jwt, parent_id.as_str()).await;
 
-                // means we are in root so list all
+                if fetched_dirs.as_ref().unwrap().len() == 0 {
+                    log::info("There is no content in this directory").unwrap();
+                    continue;
+                }
 
-                fetched_dirs = endpoints::get_children(&jwt, parent_id.as_str()).await;
-                let mut items: Vec<(String, String, &str)> = Vec::default(); // will contains the item to select
-                let mut decrypted_dirs: Vec<FsEntity> = Vec::default(); // will contains the decrypted dirs
+                let mut items: Vec<(String, String, &str)> = Vec::new(); // Items to select
+                let mut decrypted_dirs: Vec<FsEntity> = Vec::new(); // Decrypted directories
 
-                for dir in fetched_dirs.clone().unwrap().iter_mut() {
+                // Iterate and decrypt directories
+                for dir in fetched_dirs.as_ref().unwrap().iter() {
                     let decrypted_dir = if parent_id.is_empty() {
-                        // if parent_id is empty it means we must decrypt with the user master key
                         dir.clone()
-                            .decrypt(my_user.clone().master_key.clone().asset.clone().unwrap())
+                            .decrypt(my_user.master_key.asset.clone().unwrap())
                     } else {
                         dir.clone()
-                            .decrypt(selected_dir.as_ref().unwrap().key.clone().asset.unwrap())
-
-                        // TODO decrypt with own key if decrypt files
+                            .decrypt(selected_dir.as_ref().unwrap().key.asset.clone().unwrap())
                     };
 
                     decrypted_dirs.push(decrypted_dir.clone());
-
-                    let name = decrypted_dir.clone().show_name();
-
-                    let icon = if dir.clone().entity_type == "dir" {
-                        String::from("📂")
+                    let name = decrypted_dir.show_name();
+                    let icon = if dir.entity_type == "dir" {
+                        "📂"
                     } else {
-                        String::from("💾") // not really a file but fancy
+                        "💾"
                     };
-                    current_is_shared = my_user
-                        .clone()
-                        .is_entity_shared(dir.uid.clone().unwrap().as_str());
-                    let shared_status = if current_is_shared { "Shared" } else { "" };
+                    let shared_status =
+                        if my_user.is_entity_shared(dir.uid.clone().unwrap().as_str()) {
+                            "Shared"
+                        } else {
+                            ""
+                        };
 
                     items.push((
                         dir.uid.clone().unwrap(),
@@ -201,24 +191,24 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                     ));
                 }
 
-                parent_id = cliclack::select("Pick a item")
-                    .items(items.as_ref())
+                // User selection interaction
+                let selected_id = cliclack::select("Pick an item")
+                    .items(&items)
                     .interact()
                     .unwrap();
 
-                // dirty but working
-                let back: Option<FsEntity> = selected_dir.clone();
-
-                selected_dir = Some(
+                let selected_element = Some(
                     decrypted_dirs
                         .iter()
-                        .find(|d| d.uid.clone().unwrap() == parent_id)
+                        .find(|d| d.uid.clone().unwrap() == selected_id)
                         .unwrap()
                         .clone(),
                 );
 
-                // handle if it is a file
-                if selected_dir.as_ref().unwrap().clone().entity_type == "dir" {
+                // Handle directory or file
+                if selected_element.as_ref().unwrap().entity_type == "dir" {
+                    selected_dir = selected_element;
+                    parent_id = selected_id;
                     chain_of_dirs.push(selected_dir.as_ref().unwrap().clone());
                     let encry_selected_dir = fetched_dirs
                         .as_ref()
@@ -230,22 +220,18 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                         add_to_path(&current_path, &selected_dir.as_ref().unwrap().show_name());
                     encrypted_path = add_to_path(
                         &encrypted_path,
-                        &&encry_selected_dir.unwrap().encrypted_name(),
+                        &encry_selected_dir.unwrap().encrypted_name(),
                     );
                 } else {
-                    // in case of file
+                    // File handling
+                    let selected_file = selected_element;
 
-                    selected_file = selected_dir.as_ref().unwrap().clone();
-
-                    selected_dir = back;
-
-                    let selected: &str = select("What do you want to do with this file ?")
+                    let selected: &str = select("What do you want to do with this file?")
                         .item("share_file", "Share this file", "")
                         .item("download", "Download it", "")
                         .item("back", "Back", "")
                         .interact()
                         .unwrap();
-
                     match selected {
                         "share_file" => {
                             let username = get_valid_input(
@@ -259,11 +245,16 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                             // encrypt the dir key with the user public key
                             match crypto::encrypt_asymm(
                                 pb_mat.clone().unwrap().public_key.unwrap(),
-                                selected_file.key.asset.clone().unwrap(),
+                                selected_file.as_ref().unwrap().key.asset.clone().unwrap(),
                             ) {
                                 Ok(encrypted_key) => {
                                     let element_expected_2_be_shared = Sharing {
-                                        entity_uid: selected_file.clone().uid.unwrap(),
+                                        entity_uid: selected_file
+                                            .as_ref()
+                                            .unwrap()
+                                            .clone()
+                                            .uid
+                                            .unwrap(),
                                         key: Some(encrypted_key),
                                         owner_id: my_user.clone().uid.clone().unwrap(),
                                         user_id: pb_mat.clone().unwrap().owner_id.unwrap(),
@@ -276,14 +267,14 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                     current_is_shared = true;
                                 }
                                 Err(e) => {
-                                    log::error(format!("Encryption error: {}", e));
+                                    log::error(format!("Encryption error: {}", e)).unwrap();
                                 }
                             }
                         }
                         "download" => {
                             download_decrypted(
                                 jwt,
-                                &selected_file,
+                                &selected_file.as_ref().unwrap(),
                                 my_user.clone().uid.unwrap().as_str(),
                                 &current_path,
                             )
@@ -327,35 +318,26 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                     } else {
                         log::info("Items shared with you:").unwrap();
 
-                        /*  loop { */
                         let mut parent_id = "".to_string();
 
                         let mut selected_shared: Option<Sharing> = None;
-
-                        /* if selected_shared.is_some() {
-                            fetched_dirs = endpoints::get_shared_children(
-                                &jwt.as_ref().clone().unwrap(),
-                                &selected_shared.unwrap(),
-                                child_id.clone().as_str(),
-                            )
-                            .await;
-                        } */
 
                         loop {
                             let mut items: Vec<(String, String, &str)> = Vec::default(); // will contains the item to select
                             let mut decrypted_dirs: Vec<FsEntity> = Vec::default(); // will contains the decrypted dirs
                                                                                     // it means we are in the root, so must list all shared to dig in
                             if selected_shared.is_none() {
-                                log::warning("No shared selected yet");
+                                log::warning("No shared selected yet").unwrap();
                                 for sharing in shared_to_me {
                                     let encrypted_dir =
-                                        endpoints::get_shared_entity(jwt.clone(), sharing).await;
+                                        endpoints::get_shared_entity(jwt, sharing).await;
 
                                     if encrypted_dir.is_some() {
                                         log::warning(format!(
                                             "There is {}",
                                             shared_to_me.clone().len()
-                                        ));
+                                        ))
+                                        .unwrap();
 
                                         let decrypted_dir = encrypted_dir
                                             .unwrap()
@@ -377,27 +359,22 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
                                         decrypted_dirs.push(decrypted_dir);
                                     } else {
-                                        log::info("There is no content in this directory");
+                                        log::info("There is no content in this directory").unwrap();
                                     }
                                 }
                                 // else we are in the share
                             } else {
-                                log::warning(format!(
-                                    "We are in the shared folder so fetch is sub\n{}\n{}",
-                                    selected_shared.as_ref().unwrap().entity_uid,
-                                    parent_id.as_str(),
-                                ));
                                 // must get the children from the selected sharing
                                 let fetched_dirs = endpoints::get_shared_children(
-                                    &jwt.clone(),
+                                    &jwt,
                                     selected_shared.as_ref().unwrap(),
                                     parent_id.as_str(),
                                 )
                                 .await;
+
                                 if fetched_dirs.is_some() {
                                     for dir in fetched_dirs.clone().unwrap().iter_mut() {
                                         let decrypted_dir = if parent_id.is_empty() {
-                                            println!("decrypt with the shared key");
                                             // if parent_id is empty it means are in the top of the share tree
                                             dir.clone().decrypt(
                                                 selected_shared.clone().unwrap().key.unwrap(),
@@ -432,7 +409,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                         ));
                                     }
                                 } else {
-                                    log::info("There is no content in this directory");
+                                    log::info("There is no content in this directory").unwrap();
                                 }
                             }
 
@@ -441,7 +418,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                 .items(items.as_ref())
                                 .interact()
                                 .unwrap();
-                            log::warning(format!("Dossier selectioné is {}", parent_id));
+                            log::warning(format!("Dossier selectioné is {}", parent_id)).unwrap();
 
                             // contains the selected shared -> so we will dig into is tree
                             if selected_shared.is_none() {
@@ -469,15 +446,6 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                             );
                             decrypted_dirs.clear();
                         }
-
-                        /*     selected_dir = current_path =
-                                                       add_to_path(&current_path, &selected_dir.clone().show_name());
-                                                   encrypted_path = add_to_path(
-                                                       &encrypted_path,
-                                                       &&encry_selected_dir.unwrap().encrypted_name(),
-                                                   );
-                        */
-                        /*  } */
                     }
                 } else {
                     log::info("No items have been shared with you").unwrap();
@@ -606,9 +574,6 @@ async fn save_file_locally(name: &str, content: Vec<u8>, path: String) {
 }
 
 async fn sign_in() -> Option<(String, User)> {
-    let mut spinner = spinner();
-    let mut username = "".to_string();
-
     // Get salt and JWT logic here...
 
     // Assuming salt and JWT retrieval is successful
@@ -616,27 +581,14 @@ async fn sign_in() -> Option<(String, User)> {
     let mut jwt: Option<String> = None; // Placeholder for actual JWT retrieval
     let mut user: Option<User> = None;
 
-    while salt.is_none() {
-        username = get_valid_input("Provide me a username", "Value is required!");
+    while salt.is_none() || jwt.is_none() || user.is_none() {
+        let username = get_valid_input("Provide me a username", "Value is required!");
 
-        spinner.start("Getting the salt...");
         salt = endpoints::get_salt(&username).await;
 
-        if salt.is_some() {
-            spinner.stop("Salt successfully fetched");
-        } else {
-            log::error("Invalid credentials").unwrap();
-        }
-    }
-
-    // Rebuild the secret
-    while jwt.is_none() && user.is_none() {
         let usr_password = get_password_input("🔑Provide a password");
 
-        spinner.start("Verifying your account");
         let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), salt.clone());
-
-        log::success("Key rebuilt successfully").unwrap();
 
         jwt = endpoints::sign_in(&username, auth_key.clone()).await;
 
@@ -644,10 +596,6 @@ async fn sign_in() -> Option<(String, User)> {
             let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
 
             user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone()));
-
-            spinner.stop("Signed in successfully");
-        } else {
-            log::error("Invalid credentials").unwrap();
         }
     }
 
@@ -655,20 +603,15 @@ async fn sign_in() -> Option<(String, User)> {
 }
 
 async fn sign_up() -> Option<(String, User)> {
-    let mut spinner = spinner();
     let mut user: Option<User> = None;
 
-    // User creation and JWT retrieval logic here...
-
-    // Assuming user creation and JWT retrieval is successful
-    let mut jwt = String::from(""); // Placeholder for actual JWT retrieval
+    let mut jwt = String::from("");
 
     while jwt.is_empty() {
         let username = get_valid_input("Provide a username", "Value is required!");
         let usr_password = get_password_input("🔑Provide a password");
         jwt = endpoints::sign_up(&username, &usr_password).await.unwrap();
         if !jwt.is_empty() {
-            spinner.stop("Account successfully created !");
             let fetched_user = endpoints::get_user(jwt.clone().as_str()).await;
             let salt = endpoints::get_salt(&username).await.unwrap();
 
@@ -718,5 +661,3 @@ async fn download_decrypted(jwt: &str, file: &FsEntity, owner_id: &str, current_
     )
     .await;
 }
-
-async fn list_decrypted_dir(parent_id: &str) {}

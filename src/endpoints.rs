@@ -1,3 +1,7 @@
+use cliclack::{
+    log::{self, info},
+    spinner,
+};
 use reqwest::{Client, StatusCode};
 
 use model::User;
@@ -6,14 +10,12 @@ use crate::model::{self, FsEntity, PublicKeyMaterial, Sharing};
 
 static URL: &str = "https://127.0.0.1:443";
 
-// Todo get back the created user with jwt
 pub async fn sign_up(username: &str, password: &str) -> Option<String> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Connnecting...");
     // create the user -> contains secret content
     let new_plain_user = User::generate(username, password);
-
-    println!("{}", new_plain_user.clone().to_string());
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
@@ -23,25 +25,30 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::CREATED => {
-                println!("I went there");
+                spin.stop("Account successfully created");
 
                 let jwt = res.text().await.unwrap();
 
                 Some(jwt)
             }
             _ => {
-                println!(
-                    "Error : {}",
+                spin.stop("Error while creating your account");
+
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while creating your account");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -55,6 +62,8 @@ pub async fn update_password(
     let client = Client::new();
 
     // create the user -> contains secret content
+    let mut spin = spinner();
+    spin.start("Updating your password...");
 
     match client
         .post(format!(
@@ -68,20 +77,28 @@ pub async fn update_password(
         .await
     {
         Ok(res) => match res.status() {
-            StatusCode::OK => Some("Password changed".to_string()),
+            StatusCode::OK => {
+                spin.stop("Password updated successfully");
+                Some("Password updated successfully".to_string())
+            }
             _ => {
-                println!(
-                    "Error : {}",
+                spin.stop("Error while updating your password");
+
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while updating your password");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -89,6 +106,8 @@ pub async fn update_password(
 
 pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
     let client = Client::new();
+    let mut spin = spinner();
+    spin.start("Connecting...");
     match client
         .get(format!(
             "{}/get_sign_in?username={}&auth_key={}",
@@ -101,23 +120,25 @@ pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Signed in your account successful");
                 let jwt = res.text().await.unwrap();
 
                 Some(jwt)
             }
             _ => {
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            log::error(format!(" {}", e.to_string())).unwrap();
             None
         }
     }
@@ -125,6 +146,8 @@ pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
 
 pub async fn get_user(auth_token: &str) -> Option<User> {
     let client = Client::new();
+    let mut spin = spinner();
+    spin.start("Fetching your details...");
     match client
         .get(format!(
             "{}/get_user?auth_token={}",
@@ -136,117 +159,43 @@ pub async fn get_user(auth_token: &str) -> Option<User> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Details successfully fetched");
                 let expected_user: User =
                     match serde_json::from_str(res.text().await.unwrap().as_str()) {
                         Ok(c) => c,
                         Err(e) => {
-                            println!("Error while fetching user : {}", e.to_string());
+                            log::error(format!("{}", e.to_string())).unwrap();
                             return None;
                         }
                     };
                 Some(expected_user)
             }
             _ => {
-                println!(
-                    "Error : {}",
+                spin.stop("Error while fetching details");
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching details");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
 }
 
-/// Use to fetch encrypted tree metadata of the user
-/* pub async fn get_my_tree(auth_token: &str) -> Option<RootTree> {
-    let client = Client::new();
-
-    match client
-        .get(format!(
-            "{}/get_my_tree?auth_token={}",
-            URL.to_string(),
-            auth_token
-        ))
-        .send()
-        .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                let my_tree: RootTree =
-                    serde_json::from_str(res.text().await.unwrap().as_str()).unwrap();
-                Some(my_tree)
-            }
-            _ => {
-                // any other ->
-                println!(
-                    "Error : {}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                );
-                None
-            }
-        },
-        Err(e) => {
-            println!("Error : {}", e.to_string());
-            None
-        }
-    }
-} */
-
-/* pub async fn get_file(auth_token: &str, mut expected_file: FileEntity) -> Option<FileEntity> {
-    let client = Client::new();
-
-    let path = expected_file.clone().path;
-
-    match client
-        .get(format!(
-            "{}/file/get?token={}?path={}",
-            URL.to_string(),
-            auth_token,
-            path
-        ))
-        .send()
-        .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                // fetch the content
-                let encrypted_content: DataAsset =
-                    serde_json::from_str(res.text().await.unwrap().as_str()).unwrap();
-
-                expected_file.content = encrypted_content;
-                Some(expected_file)
-            }
-            _ => {
-                // any other ->
-                println!(
-                    "Error : {}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                );
-                None
-            }
-        },
-        Err(e) => {
-            println!("Error : {}", e.to_string());
-            None
-        }
-    }
-} */
-
 pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     let client = Client::new();
+    let mut spin = spinner();
+    spin.start("Fetching your salt...");
 
     match client
         .get(format!(
@@ -259,6 +208,7 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Salt successfully fetched");
                 let clear_salt = res.text().await.unwrap();
                 let salt = bs58::decode(clear_salt).into_vec();
 
@@ -266,18 +216,23 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
             }
             _ => {
                 // any other ->
-                println!(
-                    "Error : {}",
+                spin.stop("Error while fetching salt");
+
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching salt");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -285,6 +240,8 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
 
 pub async fn get_file(jwt: &str, file_id: &str, owner_id: &str) -> Option<Vec<u8>> {
     let client = Client::new();
+    let mut spin = spinner();
+    spin.start("Fetching file content...");
     match client
         .get(format!(
             "{}/file/get_content?auth_token={}&file_id={}&owner_id={}",
@@ -298,25 +255,32 @@ pub async fn get_file(jwt: &str, file_id: &str, owner_id: &str) -> Option<Vec<u8
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("File content successfully fetched");
+
                 let file_content = res.text().await.unwrap();
                 let content = bs58::decode(file_content).into_vec();
 
                 return Some(content.unwrap());
             }
             _ => {
+                spin.stop("Error while fetching file content");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching file content");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -327,7 +291,8 @@ pub async fn get_public_key_with_uid(
     username: &str,
 ) -> Option<PublicKeyMaterial> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Fetching public key...");
     match client
         .get(format!(
             "{}/auth/get_public_key?auth_token={}&username={}",
@@ -340,6 +305,8 @@ pub async fn get_public_key_with_uid(
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Public key successfully fetched");
+
                 // the public key is encoded in base64
                 let pk_material = res.text().await.unwrap();
 
@@ -348,19 +315,24 @@ pub async fn get_public_key_with_uid(
                 return Some(decoded);
             }
             _ => {
+                spin.stop("Error while fetching public key");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching public key");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -369,6 +341,8 @@ pub async fn get_public_key_with_uid(
 pub async fn share_entity(auth_token: &str, share: &Sharing) -> Option<String> {
     let client = Client::new();
 
+    let mut spin = spinner();
+    spin.start("Sharing content...");
     match client
         .post(format!(
             "{}/share?auth_token={}",
@@ -381,22 +355,28 @@ pub async fn share_entity(auth_token: &str, share: &Sharing) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Element successfully shared");
                 return Some(res.text().await.unwrap());
             }
             _ => {
+                spin.stop("Error while sharing element");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while sharing element");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -405,6 +385,8 @@ pub async fn share_entity(auth_token: &str, share: &Sharing) -> Option<String> {
 pub async fn revoke_share(auth_token: &str, share: &Sharing) -> Option<String> {
     let client = Client::new();
 
+    let mut spin = spinner();
+    spin.start("Revoking share");
     match client
         .post(format!(
             "{}/revoke_share?auth_token={}",
@@ -417,22 +399,29 @@ pub async fn revoke_share(auth_token: &str, share: &Sharing) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Share succesfully revoked");
+
                 return Some(res.text().await.unwrap());
             }
             _ => {
+                spin.stop("Error while revoking share");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while revoking share");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -441,7 +430,8 @@ pub async fn revoke_share(auth_token: &str, share: &Sharing) -> Option<String> {
 /// The path set must be encrypted
 pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Uploading new file...");
     match client
         .post(format!(
             "{}/file/create?auth_token={}",
@@ -454,22 +444,29 @@ pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("File successfully uploaded");
+
                 return Some(res.text().await.unwrap());
             }
             _ => {
+                spin.stop("Error while uploading file");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while uploading file");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -477,7 +474,8 @@ pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
 
 pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Creating new directory...");
     match client
         .post(format!(
             "{}/dir/create?auth_token={}",
@@ -490,22 +488,28 @@ pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Directory successfully created");
                 return Some(res.text().await.unwrap());
             }
             _ => {
+                spin.stop("Error while creating directory");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while creating directory");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -513,7 +517,8 @@ pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
 
 pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEntity>> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Fetching directory children...");
     match client
         .get(format!(
             "{}/dirs/get_children?auth_token={}&parent_id={}",
@@ -529,22 +534,29 @@ pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEnt
                 let list_dirs_str: Vec<FsEntity> =
                     serde_json::from_str(&res.text().await.unwrap()).unwrap();
 
+                spin.stop(format!("{} children fetched", list_dirs_str.len()));
+
                 return Some(list_dirs_str);
             }
             _ => {
+                spin.stop("Error while fetching directory children");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching directory children");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -556,7 +568,8 @@ pub async fn get_shared_children(
     sub_id: &str,
 ) -> Option<Vec<FsEntity>> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Fetching directory children...");
     match client
         .get(format!(
             "{}/dirs/get_shared_children?auth_token={}&sub_entity_id={}",
@@ -572,23 +585,29 @@ pub async fn get_shared_children(
             StatusCode::OK => {
                 let list_dirs_str: Vec<FsEntity> =
                     serde_json::from_str(&res.text().await.unwrap()).unwrap();
+                spin.stop(format!("{} children fetched", list_dirs_str.len()));
 
                 return Some(list_dirs_str);
             }
             _ => {
+                spin.stop("Error while fetching directory children");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching directory children");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }
@@ -596,7 +615,8 @@ pub async fn get_shared_children(
 
 pub async fn get_shared_entity(auth_token: &str, share: &Sharing) -> Option<FsEntity> {
     let client = Client::new();
-
+    let mut spin = spinner();
+    spin.start("Fetching element...");
     match client
         .get(format!(
             "{}/get_shared_entity?auth_token={}",
@@ -609,25 +629,32 @@ pub async fn get_shared_entity(auth_token: &str, share: &Sharing) -> Option<FsEn
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
+                spin.stop("Element successfully fetched");
+
                 let fetched_dir: FsEntity =
                     serde_json::from_str(&res.text().await.unwrap()).unwrap();
 
                 return Some(fetched_dir);
             }
             _ => {
+                spin.stop("Error while fetching your element");
+
                 // any other ->
-                println!(
-                    "Error : {}",
+                log::error(format!(
+                    "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
-                );
+                ))
+                .unwrap();
                 None
             }
         },
         Err(e) => {
-            println!("Error : {}", e.to_string());
+            spin.stop("Error while fetching your element");
+
+            log::error(format!("{}", e.to_string())).unwrap();
             None
         }
     }

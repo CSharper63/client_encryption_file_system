@@ -136,7 +136,6 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     let mut symmetric_key = [0u8; OUTPUT_SIZE];
 
     let mut hasher = Blake2bVar::new(OUTPUT_SIZE).unwrap();
-    println!("Blake ok");
     // salt for auth key
     hasher.update(&key_material);
     let mut auth_salt = [0u8; OUTPUT_SIZE];
@@ -150,15 +149,12 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
 
     // salt for symm key
     let symm_salt = Sha256::digest(key_material.clone());
-    println!("auth_kdf ok");
 
     let symm_kdf = Hkdf::<Sha256>::new(Some(&symm_salt), &key_material);
 
     symm_kdf
         .expand(b"", &mut symmetric_key)
         .expect("32 is a valid length for Sha256 to output");
-
-    println!("symm_kdf ok");
 
     (auth_key.to_vec(), symmetric_key.to_vec())
 }

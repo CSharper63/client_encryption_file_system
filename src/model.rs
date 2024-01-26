@@ -1,6 +1,6 @@
+use cliclack::spinner;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, skip_serializing_none, NoneAsEmptyString};
-use std::collections::HashMap;
+use serde_with::{serde_as, NoneAsEmptyString};
 
 use crate::crypto;
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
@@ -53,15 +53,6 @@ pub struct PublicKeyMaterial {
 }
 
 impl FsEntity {
-    // Ajoute un FsEntity au vector sub_dirs
-    /*  pub fn add_sub_dir(&mut self, sub_dir: FsEntity) {
-           if let Some(sub_dirs) = &mut self.sub_dirs {
-               sub_dirs.push(sub_dir);
-           } else {
-               self.sub_dirs = Some(vec![sub_dir]);
-           }
-       }
-    */
     // Before all must provide the current
     pub fn create(name: &str, path: &str, content: Option<Vec<u8>>, parent_id: &str) -> FsEntity {
         let dir_key = crypto::generate_master_key();
@@ -96,30 +87,26 @@ impl FsEntity {
                 nonce: None,
                 status: Some(DataStatus::Decrypted),
             },
-            /*    files: Some(Vec::default()),
-            sub_dirs: Some(Vec::default()), */
         }
     }
 
     // symm key used is the parent dir key
     pub fn encrypt(self, parent_key: Vec<u8>) -> FsEntity {
-        /*         println!("dir before encryption: {}", self.clone().to_string());
-         */
+        let mut spin = spinner();
+        spin.start(format!("Encrypting {}...", self.entity_type));
         // if the dir has already been encrypted a time, use the nonce to reencrypt
         let encrypted_name = crypto::encrypt(
             self.key.clone().asset.unwrap(),
             self.name.asset,
             self.name.nonce,
         );
-        /*         println!("Name has been encrypted");
-         */
+
         let encrypted_key = crypto::encrypt(
             parent_key.clone(),
             self.key.clone().asset,
             self.key.clone().nonce,
         );
-        /*         println!("Dir key has been encrypted");
-         */
+
         let mut encrypted_content: Option<DataAsset> = None;
 
         if self.entity_type == "file" {
@@ -130,6 +117,8 @@ impl FsEntity {
                 self.content.unwrap().nonce,
             ));
         }
+
+        spin.stop(format!("{} successfully encrypted", self.entity_type));
 
         FsEntity {
             uid: self.uid,
@@ -145,13 +134,8 @@ impl FsEntity {
 
     // happends when fetching tree from api so must be decrypted
     pub fn decrypt(self, parent_key: Vec<u8>) -> FsEntity {
-        println!(
-            "key to decrypt: {}",
-            bs58::encode(parent_key.clone()).into_string()
-        );
-
-        println!("before decrypt: {}", self.clone().to_string());
-
+        let mut spin = spinner();
+        spin.start(format!("Decrypting {}...", self.entity_type));
         // decrypt the entity key to decrypt the rest
         let decrypted_key = crypto::decrypt(
             parent_key.clone(),
@@ -169,8 +153,6 @@ impl FsEntity {
         .unwrap();
 
         let decrypted_content = if self.entity_type == "file" {
-            /*             println!("it s a file");
-             */
             Some(DataAsset {
                 asset: crypto::decrypt(
                     decrypted_key.clone(),
@@ -183,6 +165,8 @@ impl FsEntity {
         } else {
             None
         };
+
+        spin.stop(format!("{} successfully decrypted", self.entity_type));
 
         FsEntity {
             uid: self.uid,
@@ -204,10 +188,9 @@ impl FsEntity {
     }
 
     pub fn decrypt_from_dir_key(self, dir_key: Vec<u8>) -> FsEntity {
-        /*         println!("before decrypt: {}", self.clone().to_string());
-         */
         // decrypt the entity key to decrypt the rest
-
+        let mut spin = spinner();
+        spin.start(format!("Decrypting {}...", self.entity_type));
         // decrpyted with own key
         let decrypted_name = crypto::decrypt(
             dir_key.clone(),
@@ -217,8 +200,6 @@ impl FsEntity {
         .unwrap();
 
         let decrypted_content = if self.entity_type == "file" {
-            /*             println!("it s a file");
-             */
             Some(DataAsset {
                 asset: crypto::decrypt(
                     dir_key.clone(),
@@ -231,6 +212,7 @@ impl FsEntity {
         } else {
             None
         };
+        spin.stop(format!("{} successfully decrypted", self.entity_type));
 
         FsEntity {
             uid: self.uid,
@@ -265,25 +247,6 @@ impl FsEntity {
     }
 }
 
-/* #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct RootTree {
-    #[serde(default)]
-    pub dirs: Option<Vec<FsEntity>>, // all sub folders
-    // toto -> FsEntity -> ref sur toto &FsEntity
-    // |
-    //  ---- Tete
-    // titi
-    // tata
-    #[serde(default)]
-    pub files: Option<Vec<FsEntity>>, // all root files
-}
-
-impl RootTree {
-    pub fn to_string(&self) -> String {
-        serde_json::to_string_pretty(&self).unwrap_or(String::from("Unable to show the tree"))
-    }
-} */
-
 #[serde_as]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct User {
@@ -306,6 +269,8 @@ pub struct User {
 
 impl User {
     pub fn generate(username: &str, password: &str) -> Self {
+        let mut spin = spinner();
+        spin.start("Generating your keys");
         // generate the hash from password, give the hash and the salt
         let (hash, salt) = crypto::hash_password(password, None);
 
@@ -317,6 +282,8 @@ impl User {
         // TODO handle if already created
         // asymm crypto -> generate public and private keys
         let (private_key, public_key) = crypto::generate_asymm_keys();
+
+        spin.stop("Keys successfully generated");
 
         User {
             uid: None,
@@ -386,18 +353,21 @@ impl User {
 
     /// Use to rebuild symmetric and auth key from the password and the salt obtained by the api
     pub fn rebuild_secret(password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
+        let mut spin = spinner();
+        spin.start("Rebuilding your keys...");
         // generate the hash from password, give the hash and the salt
         let (hash, _) = crypto::hash_password(password, salt);
 
         // user kdf to derive auth and symm key
         let (auth_key, symm_key) = crypto::kdf(hash);
+        spin.stop("Keys successfully rebuilt");
 
         (auth_key, symm_key)
     }
 
     pub fn encrypt(self) -> User {
-        println!("Before encryption: {}", self.to_string());
-
+        let mut spin = spinner();
+        spin.start("Encrypting your profile...");
         let symmetric_key = self.symmetric_key.clone();
         let mk = self.master_key.asset.clone();
 
@@ -405,9 +375,10 @@ impl User {
         let encrypted_master_key =
             crypto::encrypt(symmetric_key.clone(), mk.clone(), self.master_key.nonce);
 
-        // TODO must be encrypted with the master key and NOT THE SYMMETRIC KEY, EXPECTED TO CHANGE IN THE FUTURE
         let encrypted_private_key =
             crypto::encrypt(mk.unwrap(), self.private_key.asset, self.private_key.nonce);
+
+        spin.stop("Profile successfully encrypted");
 
         // this use is encrypted
         User {
@@ -433,8 +404,8 @@ impl User {
     }
 
     pub fn decrypt(mut self, password: &str, salt: Option<Vec<u8>>) -> User {
-        /*         println!("before decryption: {}", self.to_string());
-         */
+        let mut spin = spinner();
+        spin.start("Decrypting your profile...");
         // use the fetched salt to generate password hash
         let (password_hash, auth_key) = crypto::hash_password(password, salt.clone());
 
@@ -456,6 +427,7 @@ impl User {
             self.private_key.asset,
         )
         .unwrap();
+        spin.stop("Profile successfully decrypted");
 
         if let Some(shared_to_me) = &mut self.shared_to_me {
             for sharing in shared_to_me.iter_mut() {
@@ -497,11 +469,15 @@ impl User {
         old_password: &str,
         new_password: &str,
     ) -> (Option<User>, String) {
+        let mut spin = spinner();
+        spin.start("Verifying your password...");
         // must verify that the password is good
         let (former_auth_key, symm_key) =
             User::rebuild_secret(old_password, self.clear_salt.clone());
 
         if symm_key == self.symmetric_key {
+            spin.stop("Your password is valid");
+
             let (hash, salt) = crypto::hash_password(new_password, None);
 
             // user kdf to derive auth and symm key
@@ -529,14 +505,11 @@ impl User {
                 bs58::encode(former_auth_key).into_string(),
             )
         } else {
+            spin.stop("Invalid credentials");
+
             // invalid password
             (None, "".to_string())
         }
-
-        /*  } else { */
-        // decrypt the user before
-        /*  None */
-        /*    } */
     }
 
     pub fn to_string(&self) -> String {
