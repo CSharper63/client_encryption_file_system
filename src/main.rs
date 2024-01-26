@@ -41,6 +41,7 @@ async fn main() {
             "sign_in" => {
                 if let Some((jwt, my_user)) = sign_in().await {
                     navigate_over(my_user, jwt.as_str()).await;
+                } else {
                 }
             }
             // handle new account
@@ -67,7 +68,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
     let mut parent_id: String = "".to_string();
 
-    let mut selected_dir: FsEntity = Default::default();
+    let mut selected_dir: Option<FsEntity> = None;
     let mut items: Vec<(&str, &str, &str)> = Vec::default();
 
     let mut current_is_shared = false;
@@ -105,7 +106,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
         let symm_key = if parent_id.is_empty() {
             my_user.clone().master_key.clone().asset.unwrap()
         } else {
-            selected_dir.key.asset.clone().unwrap()
+            selected_dir.as_ref().unwrap().key.asset.clone().unwrap()
         };
 
         // contains all ref to the dir
@@ -173,12 +174,8 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                         dir.clone()
                             .decrypt(my_user.clone().master_key.clone().asset.clone().unwrap())
                     } else {
-                        // else decrypt with the parent key
-                        println!(
-                            "key to decrypt: {}",
-                            bs58::encode(selected_dir.key.clone().asset.unwrap()).into_string()
-                        );
-                        dir.clone().decrypt(selected_dir.key.clone().asset.unwrap())
+                        dir.clone()
+                            .decrypt(selected_dir.as_ref().unwrap().key.clone().asset.unwrap())
 
                         // TODO decrypt with own key if decrypt files
                     };
@@ -210,24 +207,27 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                     .unwrap();
 
                 // dirty but working
-                let back: FsEntity = selected_dir.clone();
+                let back: Option<FsEntity> = selected_dir.clone();
 
-                selected_dir = decrypted_dirs
-                    .iter()
-                    .find(|d| d.uid.clone().unwrap() == parent_id)
-                    .unwrap()
-                    .clone();
+                selected_dir = Some(
+                    decrypted_dirs
+                        .iter()
+                        .find(|d| d.uid.clone().unwrap() == parent_id)
+                        .unwrap()
+                        .clone(),
+                );
 
                 // handle if it is a file
-                if selected_dir.clone().entity_type == "dir" {
-                    chain_of_dirs.push(selected_dir.clone());
+                if selected_dir.as_ref().unwrap().clone().entity_type == "dir" {
+                    chain_of_dirs.push(selected_dir.as_ref().unwrap().clone());
                     let encry_selected_dir = fetched_dirs
                         .as_ref()
                         .unwrap()
                         .iter()
                         .find(|d| d.uid.clone().unwrap() == parent_id);
 
-                    current_path = add_to_path(&current_path, &selected_dir.clone().show_name());
+                    current_path =
+                        add_to_path(&current_path, &selected_dir.as_ref().unwrap().show_name());
                     encrypted_path = add_to_path(
                         &encrypted_path,
                         &&encry_selected_dir.unwrap().encrypted_name(),
@@ -235,13 +235,14 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 } else {
                     // in case of file
 
-                    selected_file = selected_dir.clone();
+                    selected_file = selected_dir.as_ref().unwrap().clone();
 
                     selected_dir = back;
 
                     let selected: &str = select("What do you want to do with this file ?")
                         .item("share_file", "Share this file", "")
                         .item("download", "Download it", "")
+                        .item("back", "Back", "")
                         .interact()
                         .unwrap();
 
@@ -280,28 +281,15 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                             }
                         }
                         "download" => {
-                            // create the file fetched from the server
-                            //get le contenu du fichier de uid
-                            let content = endpoints::get_file(
+                            download_decrypted(
                                 jwt,
-                                selected_file.uid.clone().unwrap().as_str(),
-                                my_user.uid.clone().unwrap().as_str(),
-                            )
-                            .await;
-
-                            let decrypted = crypto::decrypt(
-                                selected_file.key.asset.clone().unwrap(),
-                                selected_file.content.clone().unwrap().nonce,
-                                content,
-                            );
-
-                            save_file_locally(
-                                selected_file.show_name().clone().as_str(),
-                                decrypted.unwrap(),
-                                current_path.clone(),
+                                &selected_file,
+                                my_user.clone().uid.unwrap().as_str(),
+                                &current_path,
                             )
                             .await;
                         }
+                        "back" => continue,
                         _ => {}
                     }
                 }
@@ -416,8 +404,15 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                             )
                                         } else {
                                             // else decrypt with the parent key
-                                            dir.clone()
-                                                .decrypt(selected_dir.key.clone().asset.unwrap())
+                                            dir.clone().decrypt(
+                                                selected_dir
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .key
+                                                    .clone()
+                                                    .asset
+                                                    .unwrap(),
+                                            )
                                         };
 
                                         decrypted_dirs.push(decrypted_dir.clone());
@@ -461,12 +456,17 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                             }
 
                             // the current dir matching with the sharing
-                            selected_dir = decrypted_dirs
-                                .iter()
-                                .find(|d| d.uid.clone().unwrap() == parent_id)
-                                .unwrap()
-                                .clone();
-                            current_path = add_to_path(&current_path, &selected_dir.show_name());
+                            selected_dir = Some(
+                                decrypted_dirs
+                                    .iter()
+                                    .find(|d| d.uid.clone().unwrap() == parent_id)
+                                    .unwrap()
+                                    .clone(),
+                            );
+                            current_path = add_to_path(
+                                &current_path,
+                                &selected_dir.as_ref().unwrap().show_name(),
+                            );
                             decrypted_dirs.clear();
                         }
 
@@ -499,56 +499,62 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                         .unwrap();
 
                 // get the public key of the user I want to share my dir with
-                let pb_mat = endpoints::get_public_key_with_uid(&jwt.clone(), &username).await;
+                let pb_mat = endpoints::get_public_key_with_uid(&jwt, &username).await;
 
                 // encrypt the dir key with the user public key
                 match crypto::encrypt_asymm(
                     pb_mat.clone().unwrap().public_key.unwrap(),
-                    selected_dir.key.asset.clone().unwrap(),
+                    selected_dir.as_ref().unwrap().key.asset.clone().unwrap(),
                 ) {
                     Ok(encrypted_key) => {
                         let element_expected_2_be_shared = Sharing {
-                            entity_uid: selected_dir.clone().uid.unwrap(),
+                            entity_uid: selected_dir.as_ref().unwrap().clone().uid.unwrap(),
                             key: Some(encrypted_key),
                             owner_id: my_user.uid.clone().unwrap(),
                             user_id: pb_mat.clone().unwrap().owner_id.unwrap(),
                         };
 
-                        endpoints::share_entity(&jwt.clone(), &element_expected_2_be_shared).await;
+                        endpoints::share_entity(&jwt, &element_expected_2_be_shared).await;
 
                         my_user.share(&element_expected_2_be_shared);
                         current_is_shared = true;
                     }
                     Err(e) => {
-                        log::error(format!("Encryption error: {}", e));
+                        log::error(format!("Encryption error: {}", e)).unwrap();
                     }
                 }
             }
             "revoke_share" => {
-                let share_2_revoke =
-                    my_user.find_sharing_by_entity_id(selected_dir.clone().uid.unwrap().as_str());
+                let share_2_revoke = my_user.find_sharing_by_entity_id(
+                    selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
+                );
 
                 if share_2_revoke.is_some() {
-                    let ok = endpoints::revoke_share(jwt.clone(), share_2_revoke.as_ref().unwrap())
-                        .await;
+                    let ok = endpoints::revoke_share(jwt, share_2_revoke.as_ref().unwrap()).await;
 
-                    my_user.revoke_share(selected_dir.clone().uid.unwrap().as_str());
+                    my_user
+                        .revoke_share(selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str());
                     current_is_shared = false;
 
-                    log::success("The share of this item has been revoked successfully");
+                    log::success("The share of this item has been revoked successfully").unwrap();
                 } else {
-                    log::warning("This item is not shared yet");
+                    log::warning("This item is not shared yet").unwrap();
                 }
             }
             "back" => {
                 current_path = pop_from_path(current_path.as_str()).unwrap_or("".to_string());
                 encrypted_path = pop_from_path(encrypted_path.as_str()).unwrap_or("".to_string());
 
-                parent_id = selected_dir.clone().parent_id.unwrap_or("".to_string());
+                parent_id = selected_dir
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+                    .parent_id
+                    .unwrap_or("".to_string());
                 chain_of_dirs.pop();
 
                 if !parent_id.is_empty() {
-                    selected_dir = chain_of_dirs.last().cloned().unwrap();
+                    selected_dir = Some(chain_of_dirs.last().cloned().unwrap());
                 }
 
                 log::error(format!("selected dir: {}", parent_id)).unwrap();
@@ -600,72 +606,55 @@ async fn save_file_locally(name: &str, content: Vec<u8>, path: String) {
 }
 
 async fn sign_in() -> Option<(String, User)> {
-    let mut username = get_valid_input("Provide me a username", "Value is required!");
-    let mut usr_password = get_password_input("🔑Provide a password");
     let mut spinner = spinner();
+    let mut username = "".to_string();
 
     // Get salt and JWT logic here...
 
     // Assuming salt and JWT retrieval is successful
-    let mut salt = Vec::<u8>::new(); // Placeholder for actual salt retrieval
-    let mut jwt = String::from(""); // Placeholder for actual JWT retrieval
+    let mut salt: Option<Vec<u8>> = None; // Placeholder for actual salt retrieval
+    let mut jwt: Option<String> = None; // Placeholder for actual JWT retrieval
     let mut user: Option<User> = None;
 
-    while salt.is_empty() {
-        spinner.start("Getting the salt...");
-        salt = endpoints::get_salt(&username).await.unwrap();
+    while salt.is_none() {
+        username = get_valid_input("Provide me a username", "Value is required!");
 
-        if salt.is_empty() {
-            spinner.stop("Unable to get the salt, please retry");
-            username = input("Provide me a username")
-                .placeholder("Not sure")
-                .validate(|input: &String| {
-                    if input.is_empty() {
-                        Err("Value is required!")
-                    } else {
-                        Ok(())
-                    }
-                })
-                .interact()
-                .unwrap();
-        } else {
+        spinner.start("Getting the salt...");
+        salt = endpoints::get_salt(&username).await;
+
+        if salt.is_some() {
             spinner.stop("Salt successfully fetched");
+        } else {
+            log::error("Invalid credentials").unwrap();
         }
     }
 
     // Rebuild the secret
-    while jwt.is_empty() && user.is_none() {
+    while jwt.is_none() && user.is_none() {
+        let usr_password = get_password_input("🔑Provide a password");
+
         spinner.start("Verifying your account");
-        let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), Some(salt.clone()));
+        let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), salt.clone());
 
-        log::success("Key rebuilt successfully");
+        log::success("Key rebuilt successfully").unwrap();
 
-        jwt = endpoints::sign_in(&username, auth_key.clone())
-            .await
-            .unwrap();
+        jwt = endpoints::sign_in(&username, auth_key.clone()).await;
 
-        if jwt.is_empty() {
-            spinner.stop("Invalid credential");
-            usr_password = get_password_input("🔑Provide a password");
-        } else {
-            let fetched_user = endpoints::get_user(jwt.clone().as_str()).await;
+        if jwt.is_some() {
+            let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
 
-            user = Some(
-                fetched_user
-                    .unwrap()
-                    .decrypt(&usr_password, Some(salt.clone())),
-            );
+            user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone()));
 
             spinner.stop("Signed in successfully");
+        } else {
+            log::error("Invalid credentials").unwrap();
         }
     }
 
-    Some((jwt, user.unwrap()))
+    Some((jwt.unwrap(), user.unwrap()))
 }
 
 async fn sign_up() -> Option<(String, User)> {
-    let mut username = get_valid_input("Provide a username", "Value is required!");
-    let mut usr_password = get_password_input("🔑Provide a password");
     let mut spinner = spinner();
     let mut user: Option<User> = None;
 
@@ -675,11 +664,10 @@ async fn sign_up() -> Option<(String, User)> {
     let mut jwt = String::from(""); // Placeholder for actual JWT retrieval
 
     while jwt.is_empty() {
+        let username = get_valid_input("Provide a username", "Value is required!");
+        let usr_password = get_password_input("🔑Provide a password");
         jwt = endpoints::sign_up(&username, &usr_password).await.unwrap();
-        if jwt.is_empty() {
-            username = get_valid_input("Provide a username", "Value is required!");
-            usr_password = get_password_input("🔑Provide a password");
-        } else {
+        if !jwt.is_empty() {
             spinner.stop("Account successfully created !");
             let fetched_user = endpoints::get_user(jwt.clone().as_str()).await;
             let salt = endpoints::get_salt(&username).await.unwrap();
@@ -712,4 +700,23 @@ fn get_valid_input(prompt: &str, error_msg: &str) -> String {
         .unwrap()
 }
 
-// ... Reste du code ...
+async fn download_decrypted(jwt: &str, file: &FsEntity, owner_id: &str, current_path: &str) {
+    // create the file fetched from the server
+    //get le contenu du fichier de uid
+    let content = endpoints::get_file(jwt, file.uid.clone().unwrap().as_str(), owner_id).await;
+
+    let decrypted = crypto::decrypt(
+        file.clone().key.asset.unwrap(),
+        file.content.clone().unwrap().nonce,
+        content,
+    );
+
+    save_file_locally(
+        file.show_name().clone().as_str(),
+        decrypted.unwrap(),
+        current_path.to_owned(),
+    )
+    .await;
+}
+
+async fn list_decrypted_dir(parent_id: &str) {}
