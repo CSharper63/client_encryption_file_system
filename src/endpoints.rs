@@ -47,16 +47,21 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
     }
 }
 
-pub async fn update_password(auth_token: &str, updated_user: &User) -> Option<String> {
+pub async fn update_password(
+    auth_token: &str,
+    updated_user: &User,
+    former_auth_key: &str,
+) -> Option<String> {
     let client = Client::new();
 
     // create the user -> contains secret content
 
     match client
         .post(format!(
-            "{}/auth/update_password?auth_token={}",
+            "{}/auth/update_password?auth_token={}&former_auth_key={}",
             URL.to_string(),
-            auth_token
+            auth_token,
+            former_auth_key
         ))
         .json(&updated_user)
         .send()
@@ -258,6 +263,45 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
                 let salt = bs58::decode(clear_salt).into_vec();
 
                 return Some(salt.unwrap());
+            }
+            _ => {
+                // any other ->
+                println!(
+                    "Error : {}",
+                    match res.text().await {
+                        Ok(t) => t,
+                        Err(e) => e.to_string(),
+                    }
+                );
+                None
+            }
+        },
+        Err(e) => {
+            println!("Error : {}", e.to_string());
+            None
+        }
+    }
+}
+
+pub async fn get_file(jwt: &str, file_id: &str, owner_id: &str) -> Option<Vec<u8>> {
+    let client = Client::new();
+    match client
+        .get(format!(
+            "{}/file/get_content?auth_token={}&file_id={}&owner_id={}",
+            URL.to_string(),
+            jwt,
+            file_id,
+            owner_id
+        ))
+        .send()
+        .await
+    {
+        Ok(res) => match res.status() {
+            StatusCode::OK => {
+                let file_content = res.text().await.unwrap();
+                let content = bs58::decode(file_content).into_vec();
+
+                return Some(content.unwrap());
             }
             _ => {
                 // any other ->
