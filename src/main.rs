@@ -23,8 +23,12 @@ async fn main() {
         // select if you already got an account or not
 
         let selected: &str = select("Do you have an account ?")
-            .item("sign_in", "Yes, let's connect", "")
-            .item("sign_up", "Nope, let me discover it", "looser")
+            .item("sign_in", "\x1b[1mYES\x1b[0m, let's connect", "")
+            .item(
+                "sign_up",
+                "\x1b[1mNOPE\x1b[0m, let me discover it",
+                "looser",
+            )
             .interact()
             .unwrap();
 
