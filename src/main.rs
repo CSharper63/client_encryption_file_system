@@ -498,10 +498,6 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
             }
 
             "share_entity" => {
-                if selected_dir.is_none() || selected_dir.as_ref().unwrap().parent_id.is_none() {
-                    log::error("You cannot share your root directories").unwrap();
-                    continue;
-                }
                 let username: String =
                     cliclack::input("Please enter the username you want to share the element with")
                         .placeholder("john_doe_76")
