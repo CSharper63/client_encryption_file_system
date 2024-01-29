@@ -10,6 +10,7 @@ pub enum DataStatus {
     Decrypted,
 }
 
+
 #[derive(Default, PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct DataAsset {
     // can contain encrypted/decrypted data

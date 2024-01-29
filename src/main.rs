@@ -278,6 +278,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                 &selected_file.as_ref().unwrap(),
                                 my_user.clone().uid.unwrap().as_str(),
                                 &current_path,
+                                FileStatus::Own,
                             )
                             .await;
                         }
@@ -415,11 +416,11 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                             }
 
                             // the selected folder will be now the current parent
-                            parent_id = cliclack::select("Pick a folder")
+                            let selected_id = cliclack::select("Pick a folder")
                                 .items(items.as_ref())
                                 .interact()
                                 .unwrap();
-                            log::warning(format!("Dossier selectioné is {}", parent_id)).unwrap();
+                            log::warning(format!("Dossier selectioné is {}", selected_id)).unwrap();
 
                             // contains the selected shared -> so we will dig into is tree
                             if selected_shared.is_none() {
@@ -427,25 +428,58 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                 selected_shared = Some(
                                     shared_to_me
                                         .iter()
-                                        .find(|d| d.entity_uid.clone() == parent_id)
+                                        .find(|d| d.entity_uid.clone() == selected_id)
                                         .unwrap()
                                         .clone(),
                                 );
                             }
 
                             // the current dir matching with the sharing
-                            selected_dir = Some(
+                            let selected_element = Some(
                                 decrypted_dirs
                                     .iter()
-                                    .find(|d| d.uid.clone().unwrap() == parent_id)
+                                    .find(|d| d.uid.clone().unwrap() == selected_id)
                                     .unwrap()
                                     .clone(),
                             );
-                            current_path = add_to_path(
-                                &current_path,
-                                &selected_dir.as_ref().unwrap().show_name(),
-                            );
-                            decrypted_dirs.clear();
+
+                            if selected_element.as_ref().unwrap().entity_type == "dir" {
+                                selected_dir = selected_element;
+                                parent_id = selected_id;
+                                chain_of_dirs.push(selected_dir.as_ref().unwrap().clone());
+
+                                current_path = add_to_path(
+                                    &current_path,
+                                    &selected_dir.as_ref().unwrap().show_name(),
+                                );
+
+                                decrypted_dirs.clear();
+                            } else {
+                                //######################################################## handle case of file:
+                                let selected_file = selected_element;
+
+                                let selected: &str =
+                                    select("What do you want to do with this file?")
+                                        .item("download", "Download it", "")
+                                        .item("back", "Back", "")
+                                        .interact()
+                                        .unwrap();
+                                match selected {
+                                    "download" => {
+                                        download_decrypted(
+                                            jwt,
+                                            &selected_file.as_ref().unwrap(),
+                                            &selected_shared.as_ref().unwrap().owner_id,
+                                            &current_path,
+                                            FileStatus::Shared,
+                                        )
+                                        .await;
+                                        break;
+                                    }
+                                    "back" => continue,
+                                    _ => {}
+                                }
+                            }
                         }
                     }
                 } else {
@@ -553,16 +587,21 @@ fn get_password_input(prompt: &str) -> String {
     password(prompt).mask('🙈').interact().unwrap()
 }
 
-async fn save_file_locally(name: &str, content: Vec<u8>, path: String) {
+async fn save_file_locally(name: &str, content: Vec<u8>, path: String, status: FileStatus) {
     // get current path
     let current_dir = env::current_dir().unwrap();
 
     //compute the path
-    let target_dir = current_dir.join(format!("vault/{}", path));
+    let target_dir = match status {
+        FileStatus::Own => current_dir.join(format!("vault/owned/{}", path)),
+        FileStatus::Shared => current_dir.join(format!("vault/shared/{}", path)),
+    };
+
     // create the tree
     if !Path::new(&target_dir).exists() {
         fs::create_dir_all(&target_dir).unwrap();
     }
+
     // join path
     let file_path = target_dir.join(name);
     let mut spin = spinner();
@@ -649,7 +688,17 @@ fn get_valid_input(prompt: &str, error_msg: &str) -> String {
         .unwrap()
 }
 
-async fn download_decrypted(jwt: &str, file: &FsEntity, owner_id: &str, current_path: &str) {
+enum FileStatus {
+    Own,
+    Shared,
+}
+async fn download_decrypted(
+    jwt: &str,
+    file: &FsEntity,
+    owner_id: &str,
+    current_path: &str,
+    status: FileStatus,
+) {
     let content = endpoints::get_file(jwt, file.uid.clone().unwrap().as_str(), owner_id).await;
 
     let decrypted = crypto::decrypt(
@@ -662,6 +711,7 @@ async fn download_decrypted(jwt: &str, file: &FsEntity, owner_id: &str, current_
         file.show_name().clone().as_str(),
         decrypted.unwrap(),
         current_path.to_owned(),
+        status,
     )
     .await;
 }
