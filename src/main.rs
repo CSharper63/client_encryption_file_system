@@ -498,7 +498,10 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
             }
 
             "share_entity" => {
-                if selected_dir
+                if selected_dir.is_none() {
+                    log::error("You cannot share your root directories").unwrap();
+                    break;
+                } else if selected_dir
                     .as_ref()
                     .unwrap()
                     .parent_id
