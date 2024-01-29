@@ -120,7 +120,7 @@ pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
     {
         Ok(res) => match res.status() {
             StatusCode::OK => {
-                spin.stop("Signed in your account successful");
+                spin.stop("Signed in your account successfully");
                 let jwt = res.text().await.unwrap();
 
                 Some(jwt)
