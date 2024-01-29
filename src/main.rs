@@ -192,6 +192,10 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                     ));
                 }
 
+                if items.len() == 0 {
+                    break;
+                }
+
                 // User selection interaction
                 let selected_id = cliclack::select("Pick an item")
                     .items(&items)
@@ -364,6 +368,9 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                         log::info("There is no content in this directory").unwrap();
                                     }
                                 }
+                                if items.len() == 0 {
+                                    break;
+                                }
                                 // else we are in the share
                             } else {
                                 // must get the children from the selected sharing
@@ -412,6 +419,9 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                     }
                                 } else {
                                     log::info("There is no content in this directory").unwrap();
+                                }
+                                if items.len() == 0 {
+                                    break;
                                 }
                             }
 
@@ -488,6 +498,18 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
             }
 
             "share_entity" => {
+                if selected_dir
+                    .as_ref()
+                    .unwrap()
+                    .parent_id
+                    .as_ref()
+                    .unwrap()
+                    .is_empty()
+                {
+                    log::error("You cannot share your root directories").unwrap();
+                    break;
+                }
+
                 let username: String =
                     cliclack::input("Please enter the username you want to share the element with")
                         .placeholder("john_doe_76")
