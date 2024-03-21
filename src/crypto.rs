@@ -4,10 +4,6 @@ use argon2::{
     password_hash::{rand_core::RngCore, SaltString},
     Algorithm, Argon2, Params, Version,
 };
-use blake2::{
-    digest::{Update, VariableOutput},
-    Blake2bVar,
-};
 
 use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
@@ -135,25 +131,12 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     let mut auth_key = [0u8; OUTPUT_SIZE];
     let mut symmetric_key = [0u8; OUTPUT_SIZE];
 
-    let mut hasher = Blake2bVar::new(OUTPUT_SIZE).unwrap();
-    // salt for auth key
-    hasher.update(&key_material);
-    let mut auth_salt = [0u8; OUTPUT_SIZE];
-    hasher.finalize_variable(&mut auth_salt).unwrap();
+    let kdf = Hkdf::<Sha256>::from_prk(&key_material.as_slice()).unwrap();
 
-    let auth_kdf = Hkdf::<Sha256>::new(Some(&auth_salt), &key_material);
-
-    auth_kdf
-        .expand(b"", &mut auth_key)
+    kdf.expand(b"auth_key", &mut auth_key)
         .expect("32 is a valid length for Sha256 to output");
 
-    // salt for symm key
-    let symm_salt = Sha256::digest(key_material.clone());
-
-    let symm_kdf = Hkdf::<Sha256>::new(Some(&symm_salt), &key_material);
-
-    symm_kdf
-        .expand(b"", &mut symmetric_key)
+    kdf.expand(b"symm_key", &mut symmetric_key)
         .expect("32 is a valid length for Sha256 to output");
 
     (auth_key.to_vec(), symmetric_key.to_vec())
