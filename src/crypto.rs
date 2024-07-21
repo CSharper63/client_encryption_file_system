@@ -17,7 +17,7 @@ use rsa::{
     sha2, Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
-use crate::model::{DataAsset, DataStatus};
+use crate::model::{DataAsset, DataState};
 
 /// Use to encrypt data using extended chacha20poly1305.
 pub fn encrypt(
@@ -42,7 +42,7 @@ pub fn encrypt(
     Ok(DataAsset {
         asset: Some(ciphertext),
         nonce: Some(nonce_2_use),
-        status: Some(DataStatus::Encrypted),
+        status: Some(DataState::Encrypted),
     })
 }
 

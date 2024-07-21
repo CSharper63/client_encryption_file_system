@@ -5,7 +5,7 @@ use std::error::Error;
 
 use crate::crypto;
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
-pub enum DataStatus {
+pub enum DataState {
     // allow to know if the current processed data are encrypted or not
     Encrypted,
     Decrypted,
@@ -19,7 +19,7 @@ pub struct DataAsset {
     #[serde(with = "base58")]
     pub nonce: Option<Vec<u8>>,
     #[serde(skip_serializing)]
-    pub status: Option<DataStatus>,
+    pub status: Option<DataState>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,7 +72,7 @@ impl FsEntity {
             content_2_process = Some(DataAsset {
                 asset: content,
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             });
             String::from("file")
         };
@@ -86,12 +86,12 @@ impl FsEntity {
             name: DataAsset {
                 asset: Some(name.as_bytes().to_vec()),
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             key: DataAsset {
                 asset: Some(dir_key),
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
         })
     }
@@ -173,7 +173,7 @@ impl FsEntity {
             Some(DataAsset {
                 asset,
                 nonce: self.content.unwrap().nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             })
         } else {
             None
@@ -191,12 +191,12 @@ impl FsEntity {
             name: DataAsset {
                 asset: Some(decrypted_name),
                 nonce: self.name.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             key: DataAsset {
                 asset: Some(decrypted_key),
                 nonce: self.key.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
         })
     }
@@ -226,7 +226,7 @@ impl FsEntity {
             Some(DataAsset {
                 asset,
                 nonce: self.content.unwrap().nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             })
         } else {
             None
@@ -242,12 +242,12 @@ impl FsEntity {
             name: DataAsset {
                 asset: Some(decrypted_name),
                 nonce: self.name.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             key: DataAsset {
                 asset: Some(dir_key),
                 nonce: self.key.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
         })
     }
@@ -312,14 +312,14 @@ impl User {
             master_key: DataAsset {
                 asset: Some(master_key),
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             auth_key: Some(auth_key),
             public_key: Some(public_key),
             private_key: DataAsset {
                 asset: Some(private_key),
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             shared_to_me: Some(Vec::new()),
             shared_to_others: Some(Vec::new()),
@@ -411,14 +411,14 @@ impl User {
             master_key: DataAsset {
                 asset: encrypted_master_key.asset,
                 nonce: encrypted_master_key.nonce,
-                status: Some(DataStatus::Encrypted),
+                status: Some(DataState::Encrypted),
             },
             auth_key: self.auth_key,
             public_key: self.public_key,
             private_key: DataAsset {
                 asset: encrypted_private_key.asset,
                 nonce: encrypted_private_key.nonce,
-                status: Some(DataStatus::Encrypted),
+                status: Some(DataState::Encrypted),
             },
             shared_to_me: Some(Vec::new()),
             shared_to_others: Some(Vec::new()),
@@ -477,13 +477,13 @@ impl User {
             master_key: DataAsset {
                 asset: Some(user_master_key), // decrypted
                 nonce: self.master_key.nonce, // we don't need it anymore as soon as we fetch and decrypted the content from the api
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             public_key: self.public_key,
             private_key: DataAsset {
                 asset: Some(user_private_key), // decrypted
                 nonce: self.private_key.nonce.clone(),
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             },
             shared_to_me: self.shared_to_me,
             shared_to_others: self.shared_to_others,
@@ -512,7 +512,7 @@ impl User {
             let master_key = DataAsset {
                 asset: self.master_key.clone().asset,
                 nonce: None,
-                status: Some(DataStatus::Decrypted),
+                status: Some(DataState::Decrypted),
             };
 
             return Ok((
