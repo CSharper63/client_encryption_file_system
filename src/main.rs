@@ -17,7 +17,7 @@ pub mod endpoints;
 pub mod model;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     intro("Welcome to encryption client").unwrap();
     loop {
         // select if you already got an account or not
@@ -36,13 +36,13 @@ async fn main() {
         match selected {
             // this case handle existing account
             "sign_in" => {
-                if let Some((jwt, my_user)) = sign_in().await {
+                if let Ok(Some((jwt, my_user))) = sign_in().await {
                     navigate_over(my_user, jwt.as_str()).await;
                 }
             }
             // handle new account
             "sign_up" => {
-                if let Some((jwt, my_user)) = sign_up().await {
+                if let Ok(Some((jwt, my_user))) = sign_up().await {
                     navigate_over(my_user, jwt.as_str()).await;
                 }
             }
@@ -55,7 +55,7 @@ async fn main() {
 }
 
 // !! can be factorised
-async fn navigate_over(mut my_user: User, jwt: &str) {
+async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::error::Error>> {
     log::success(format!("Welcome Mr. {}", my_user.clone().username)).unwrap();
 
     let mut current_path: String = "".to_string(); // current path when navigate over the tree
@@ -69,7 +69,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
     let mut current_is_shared = false;
     let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
 
-    loop {
+    Ok(loop {
         log::info(format!(" -> 📁 You are here: /{}", current_path.clone())).unwrap();
 
         // if we want o modifiy the tree -> modify dirs_refs_to_process
@@ -105,23 +105,21 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
         // contains all ref to the dir
         match selected {
-            "sign_out" => {
-                break;
-            }
+            "sign_out" => break,
             "create_dir" => {
                 // ask user for a dir name
                 let dir_name = get_valid_input("Provide me a directory name", "Name is required!");
 
                 // generate dir -> content:None
                 let new_dir =
-                    FsEntity::create(dir_name.as_str(), &encrypted_path, None, &parent_id); // so it s a file
+                    FsEntity::create(dir_name.as_str(), &encrypted_path, None, &parent_id)?; // so it s a file
 
                 // compute which key will encrypt the dir -> if at root -> user mk else parent dir key
 
-                let encr_dir = new_dir.clone().encrypt(symm_key);
+                let encr_dir = new_dir.clone().encrypt(symm_key)?;
 
                 endpoints::create_dir(jwt, &encr_dir.clone()).await;
-            }
+            },
             "add_file" => {
                 let path = get_valid_input(
                     "Please enter the absolute path of the file you want to add",
@@ -143,12 +141,12 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                     &encrypted_path,
                     Some(content.clone()),
                     &parent_id.clone(),
-                );
+                )?;
 
-                let encrypted_file = new_file.clone().encrypt(symm_key.clone());
+                let encrypted_file = new_file.clone().encrypt(symm_key.clone())?;
 
                 endpoints::add_file(jwt, &encrypted_file).await.unwrap();
-            }
+            },
             "list_content" => {
                 // Fetch directories or files from the endpoint
                 let fetched_dirs = endpoints::get_children(&jwt, parent_id.as_str()).await;
@@ -165,10 +163,10 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 for dir in fetched_dirs.as_ref().unwrap().iter() {
                     let decrypted_dir = if parent_id.is_empty() {
                         dir.clone()
-                            .decrypt(my_user.master_key.asset.clone().unwrap())
+                            .decrypt(my_user.master_key.asset.clone().unwrap())?
                     } else {
                         dir.clone()
-                            .decrypt(selected_dir.as_ref().unwrap().key.asset.clone().unwrap())
+                            .decrypt(selected_dir.as_ref().unwrap().key.asset.clone().unwrap())?
                     };
 
                     decrypted_dirs.push(decrypted_dir.clone());
@@ -194,6 +192,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
                 if items.len() == 0 {
                     break;
+                    //continue;
                 }
 
                 // User selection interaction
@@ -290,29 +289,27 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                         _ => {}
                     }
                 }
-            }
+            },
             "change_password" => {
                 let old_1 = get_password_input("🔑Provide your current password");
 
                 let new_1 = get_password_input("🔑Provide a new password");
 
                 // !! must be decrypted before
-                let (updated, former_auth_key) = my_user.update_password(&old_1, new_1.as_str());
+                let (updated, former_auth_key) = my_user.update_password(&old_1, new_1.as_str())?;
 
                 if updated.clone().is_none() {
                     log::error(format!("Invalid password, please re-sign in")).unwrap();
                 } else {
-                    let new_encrypted_user = updated.unwrap().encrypt();
+                    let new_encrypted_user = updated.unwrap().encrypt()?;
 
                     endpoints::update_password(&jwt, &new_encrypted_user, former_auth_key.as_str())
                         .await;
 
                     log::success(format!("Password changed successfully")).unwrap();
                 }
-
-                break;
             }
-
+,
             // about share ->
             // if its a dir, we must add the whole tree children to authorized list access to the person I share with.
             // struct will look like -> {"shared_item_uid":"encrypted key"} -> server must verify that is not a root folder,
@@ -347,7 +344,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
 
                                         let decrypted_dir = encrypted_dir
                                             .unwrap()
-                                            .decrypt_from_dir_key(sharing.clone().key.unwrap());
+                                            .decrypt_from_dir_key(sharing.clone().key.unwrap())?;
 
                                         let name = decrypted_dir.clone().show_name();
 
@@ -387,7 +384,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                             // if parent_id is empty it means are in the top of the share tree
                                             dir.clone().decrypt(
                                                 selected_shared.clone().unwrap().key.unwrap(),
-                                            )
+                                            )?
                                         } else {
                                             // else decrypt with the parent key
                                             dir.clone().decrypt(
@@ -398,7 +395,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                                                     .clone()
                                                     .asset
                                                     .unwrap(),
-                                            )
+                                            )?
                                         };
 
                                         decrypted_dirs.push(decrypted_dir.clone());
@@ -495,7 +492,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 } else {
                     log::info("No items have been shared with you").unwrap();
                 }
-            }
+            },
 
             "share_entity" => {
                 let username: String =
@@ -536,7 +533,8 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                         log::error(format!("Encryption error: {}", e)).unwrap();
                     }
                 }
-            }
+            },
+
             "revoke_share" => {
                 let share_2_revoke = my_user.find_sharing_by_entity_id(
                     selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
@@ -553,7 +551,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 } else {
                     log::warning("This item is not shared yet").unwrap();
                 }
-            }
+            },
             "back" => {
                 current_path = pop_from_path(current_path.as_str()).unwrap_or("".to_string());
                 encrypted_path = pop_from_path(encrypted_path.as_str()).unwrap_or("".to_string());
@@ -569,10 +567,10 @@ async fn navigate_over(mut my_user: User, jwt: &str) {
                 if !parent_id.is_empty() {
                     selected_dir = Some(chain_of_dirs.last().cloned().unwrap());
                 }
-            }
+            },
             _ => log::error("Hmmm you are not supposed to be there").unwrap(),
-        }
-    }
+        };
+    })
 }
 
 fn add_to_path(current_path: &str, element: &str) -> String {
@@ -632,7 +630,7 @@ async fn save_file_locally(name: &str, content: Vec<u8>, path: String, status: F
     };
 }
 
-async fn sign_in() -> Option<(String, User)> {
+async fn sign_in() -> Result<Option<(String, User)>, Box<dyn std::error::Error>> {
     let mut salt: Option<Vec<u8>> = None;
     let mut jwt: Option<String> = None;
     let mut user: Option<User> = None;
@@ -644,21 +642,21 @@ async fn sign_in() -> Option<(String, User)> {
 
         let usr_password = get_password_input("🔑Provide a password");
 
-        let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), salt.clone());
+        let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), salt.clone())?;
 
         jwt = endpoints::sign_in(&username, auth_key.clone()).await;
 
         if jwt.is_some() {
             let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
 
-            user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone()));
+            user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone())?);
         }
     }
 
-    Some((jwt.unwrap(), user.unwrap()))
+    Ok(Some((jwt.unwrap(), user.unwrap())))
 }
 
-async fn sign_up() -> Option<(String, User)> {
+async fn sign_up() -> Result<Option<(String, User)>, Box<dyn std::error::Error>> {
     let mut user: Option<User> = None;
 
     let mut jwt = String::from("");
@@ -666,7 +664,10 @@ async fn sign_up() -> Option<(String, User)> {
     while jwt.is_empty() {
         let username = get_valid_input("Provide a username", "Value is required!");
         let usr_password = get_password_input("🔑Provide a password");
-        jwt = endpoints::sign_up(&username, &usr_password).await.unwrap();
+        jwt = endpoints::sign_up(&username, &usr_password)
+            .await
+            .unwrap()
+            .unwrap();
         if !jwt.is_empty() {
             let fetched_user = endpoints::get_user(jwt.clone().as_str()).await;
             let salt = endpoints::get_salt(&username).await.unwrap();
@@ -674,12 +675,12 @@ async fn sign_up() -> Option<(String, User)> {
             user = Some(
                 fetched_user
                     .unwrap()
-                    .decrypt(&usr_password, Some(salt.clone())),
+                    .decrypt(&usr_password, Some(salt.clone()))?,
             );
         }
     }
 
-    Some((jwt, user.unwrap()))
+    Ok(Some((jwt, user.unwrap())))
 }
 
 fn get_valid_input(prompt: &str, error_msg: &str) -> String {

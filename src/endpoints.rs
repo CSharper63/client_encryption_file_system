@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use cliclack::{
     log::{self},
     spinner,
@@ -10,16 +12,16 @@ use crate::model::{self, FsEntity, PublicKeyMaterial, Sharing};
 
 static URL: &str = "https://127.0.0.1:443";
 
-pub async fn sign_up(username: &str, password: &str) -> Option<String> {
+pub async fn sign_up(username: &str, password: &str) -> Result<Option<String>, Box<dyn Error>> {
     let client = Client::new();
     let mut spin = spinner();
     spin.start("Connnecting...");
     // create the user -> contains secret content
-    let new_plain_user = User::generate(username, password);
+    let new_plain_user = User::generate(username, password)?;
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
-        .json(&new_plain_user.clone().encrypt())
+        .json(&new_plain_user.clone().encrypt()?)
         .send()
         .await
     {
@@ -29,9 +31,9 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
 
                 let jwt = res.text().await.unwrap();
 
-                Some(jwt)
+                Ok(Some(jwt))
             }
-            _ => {
+            _ => Ok({
                 spin.stop("Error while creating your account");
 
                 log::error(format!(
@@ -43,14 +45,14 @@ pub async fn sign_up(username: &str, password: &str) -> Option<String> {
                 ))
                 .unwrap();
                 None
-            }
+            }),
         },
-        Err(e) => {
+        Err(e) => Ok({
             spin.stop("Error while creating your account");
 
             log::error(format!("{}", e.to_string())).unwrap();
             None
-        }
+        }),
     }
 }
 
@@ -216,16 +218,16 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
             }
             _ => {
                 // any other ->
-                spin.stop("Error while fetching salt");
+                log::error("Error while fetching salt").unwrap();
 
-                log::error(format!(
+                /* log::error(format!(
                     "{}",
                     match res.text().await {
                         Ok(t) => t,
                         Err(e) => e.to_string(),
                     }
                 ))
-                .unwrap();
+                .unwrap(); */
                 None
             }
         },

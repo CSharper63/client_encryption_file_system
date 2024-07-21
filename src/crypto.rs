@@ -6,7 +6,7 @@ use argon2::{
 };
 
 use hkdf::Hkdf;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
@@ -19,119 +19,104 @@ use rsa::{
 
 use crate::model::{DataAsset, DataStatus};
 
-// TODO verify that OSRng is a valid Crypto RNG
-
 /// Use to encrypt data using extended chacha20poly1305.
-pub fn encrypt(key: Vec<u8>, data: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> DataAsset {
-    match data {
-        Some(data) => {
-            let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
+pub fn encrypt(
+    key: Vec<u8>,
+    data: Option<Vec<u8>>,
+    nonce: Option<Vec<u8>>,
+) -> Result<DataAsset, Box<dyn Error>> {
+    // check if data is present
+    let Some(data) = data else {
+        return Err("No plaintext provided".into());
+    };
 
-            // in case of we want to re-encrypt an existing file
-            // TODO verify nonce size
-            let nonce_2_use =
-                nonce.unwrap_or(XChaCha20Poly1305::generate_nonce(&mut OsRng).to_vec());
+    let stream = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
 
-            let ciphertext = cipher
-                .encrypt(XNonce::from_slice(&nonce_2_use), data.as_slice())
-                .map_err(|e| format!("Error while encrypting: {}", e));
+    // in case of we want to re-encrypt an existing file
+    let nonce_2_use = nonce.unwrap_or(XChaCha20Poly1305::generate_nonce(&mut OsRng).to_vec());
 
-            let key = DataAsset {
-                asset: Some(ciphertext.unwrap()),
-                nonce: Some(nonce_2_use),
-                status: Some(DataStatus::Encrypted),
-            };
-            key
-        }
-        None => DataAsset {
-            asset: None,
-            nonce: None,
-            status: None,
-        },
-    }
+    let Ok(ciphertext) = stream.encrypt(XNonce::from_slice(&nonce_2_use), data.as_slice()) else {
+        return Err("Unable to encrypt plaintext".into());
+    };
+
+    Ok(DataAsset {
+        asset: Some(ciphertext),
+        nonce: Some(nonce_2_use),
+        status: Some(DataStatus::Encrypted),
+    })
 }
 
 /// Use to decrypt data using chacha20poly1305.
-pub fn decrypt(key: Vec<u8>, nonce: Option<Vec<u8>>, data: Option<Vec<u8>>) -> Option<Vec<u8>> {
-    let nonce_set: bool;
-    // verify if nonce is present
-    match nonce {
-        Some(_) => nonce_set = true,
-        None => nonce_set = false,
-    }
+pub fn decrypt(
+    key: Vec<u8>,
+    nonce: Option<Vec<u8>>,
+    data: Option<Vec<u8>>,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    // check if nonce is present
+    let Some(nonce) = nonce else {
+        return Err("No nonce provided".into());
+    };
 
-    // init decryption only if nonce is set
-    if nonce_set {
-        match data {
-            Some(data) => {
-                let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
+    // check if data is present
+    let Some(data) = data else {
+        return Err("No ciphertext provided".into());
+    };
 
-                let plaintext = cipher
-                    .decrypt(XNonce::from_slice(&nonce.unwrap()), data.as_slice())
-                    .map_err(|e| format!("Error while decrypting: {}", e));
-                return Some(plaintext.unwrap());
-            }
-            None => {
-                return None;
-            }
-        }
-    } else {
-        return None;
-    }
+    // decrypt
+    let stream = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
+
+    let Ok(plaintext) = stream.decrypt(XNonce::from_slice(&nonce), data.as_slice()) else {
+        return Err("Unable to decrypt ciphertext".into());
+    };
+
+    return Ok(plaintext);
 }
 
 /// Use to generate symmetric key, this key will be used to encrypt the vault user master key.
-pub fn hash_password(plain_password: &str, salt: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>) {
-    let salt_2_process: Vec<u8>;
-    match salt {
-        Some(salt_user) => {
-            salt_2_process = salt_user;
-        }
-        None => {
-            salt_2_process = SaltString::generate(&mut OsRng)
-                .to_string()
-                .as_bytes()
-                .to_vec();
-        }
-    };
+pub fn hash_password(
+    plain_password: &str,
+    salt: Option<Vec<u8>>,
+) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
+    let salt = salt.unwrap_or(
+        SaltString::generate(&mut OsRng)
+            .to_string()
+            .as_bytes()
+            .to_vec(),
+    );
 
-    let params = Params::new(
-        1048576,  // Coût de la mémoire (en kilooctets)
-        3,        // Coût du temps (itérations)
-        1,        // Parallélisme
-        Some(32), // Longueur du sel (en option)
-    )
-    .unwrap();
+    let Ok(params) = Params::new(1048576, 3, 1, Some(32)) else {
+        return Err("Unable to init argon2id params".into());
+    };
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut hashed_password = [0u8; 32]; // Can be any desired size
-    argon2 // TODO change Argon2id params
-        .hash_password_into(
-            plain_password.as_bytes(),
-            salt_2_process.as_slice(),
-            &mut hashed_password,
-        )
-        .unwrap();
 
-    (hashed_password.to_vec(), salt_2_process.to_vec())
+    let _ = argon2.hash_password_into(
+        plain_password.as_bytes(),
+        salt.as_slice(),
+        &mut hashed_password,
+    );
+
+    Ok((hashed_password.to_vec(), salt.to_vec()))
 }
 
 /// Use to generate the master key, this key will be used to encrypt all the entity keys such as file/dir keys.
-pub fn generate_master_key() -> Vec<u8> {
+pub fn generate_master_key() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
-    key.to_vec()
+    Ok(key.to_vec())
 }
 
 /// Use to derive keys from input, in this case the input will be a password hash and the derivation will produce an auth key and a symmetric key.
-pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-    //TODO concat auto gen salt to the key
+pub fn kdf(key_material: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     const OUTPUT_SIZE: usize = 32;
     let mut auth_key = [0u8; OUTPUT_SIZE];
     let mut symmetric_key = [0u8; OUTPUT_SIZE];
 
-    let kdf = Hkdf::<Sha256>::from_prk(&key_material.as_slice()).unwrap();
+    let Ok(kdf) = Hkdf::<Sha256>::from_prk(&key_material.as_slice()) else {
+        return Err("Unable to generate kdf from key".into());
+    };
 
     kdf.expand(b"auth_key", &mut auth_key)
         .expect("32 is a valid length for Sha256 to output");
@@ -139,19 +124,29 @@ pub fn kdf(key_material: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     kdf.expand(b"symm_key", &mut symmetric_key)
         .expect("32 is a valid length for Sha256 to output");
 
-    (auth_key.to_vec(), symmetric_key.to_vec())
+    Ok((auth_key.to_vec(), symmetric_key.to_vec()))
 }
 
 /// Use to generate asymmetric public/private keys-pair using RSA-OAEP 4096
-pub fn generate_asymm_keys() -> (Vec<u8>, Vec<u8>) {
+pub fn generate_asymm_keys() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     let mut rng = OsRng;
-    let bits = 4096; // !! for test purposes only
-    let priv_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
-    let pub_key = RsaPublicKey::from(&priv_key);
-    let secret = priv_key.to_pkcs8_der().unwrap();
-    let public = pub_key.to_public_key_der().unwrap();
+    let bits = 4096;
 
-    (secret.to_bytes().to_vec(), public.to_vec())
+    let Ok(priv_key) = RsaPrivateKey::new(&mut rng, bits) else {
+        return Err("Unable to generate RSA private key".into());
+    };
+
+    let pub_key = RsaPublicKey::from(&priv_key);
+
+    let Ok(secret) = priv_key.to_pkcs8_der() else {
+        return Err("Unable to export RSA private key in DER".into());
+    };
+
+    let Ok(public) = pub_key.to_public_key_der() else {
+        return Err("Unable to export RSA public key in DER".into());
+    };
+
+    Ok((secret.to_bytes().to_vec(), public.to_vec()))
 }
 
 /// Use RSA-OAEP to encrypt the data using the public key
