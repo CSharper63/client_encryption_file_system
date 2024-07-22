@@ -17,7 +17,7 @@ use rsa::{
     sha2, Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
-use crate::model::{DataAsset, DataState};
+use crate::model::DataAsset;
 
 /// Use to encrypt data using extended chacha20poly1305.
 pub fn encrypt(
@@ -39,11 +39,9 @@ pub fn encrypt(
         return Err("Unable to encrypt plaintext".into());
     };
 
-    Ok(DataAsset {
-        asset: Some(ciphertext),
-        nonce: Some(nonce_2_use),
-        status: Some(DataState::Encrypted),
-    })
+    let encrypted = DataAsset::encrypted(Some(ciphertext), Some(nonce_2_use));
+
+    Ok(encrypted)
 }
 
 /// Use to decrypt data using chacha20poly1305.
