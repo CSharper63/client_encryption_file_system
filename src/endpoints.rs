@@ -17,11 +17,12 @@ pub async fn sign_up(username: &str, password: &str) -> Result<Option<String>, B
     let mut spin = spinner();
     spin.start("Connnecting...");
     // create the user -> contains secret content
-    let new_plain_user = User::generate(username, password)?;
+    let mut new_plain_user = User::generate(username, password)?;
+    new_plain_user.encrypt()?;
 
     match client
         .get(format!("{}/get_sign_up", URL.to_string()))
-        .json(&new_plain_user.clone().encrypt()?)
+        .json(&new_plain_user)
         .send()
         .await
     {
