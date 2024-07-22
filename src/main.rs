@@ -291,23 +291,21 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                 }
             },
             "change_password" => {
+                // todo review, crash after changing
                 let old_1 = get_password_input("🔑Provide your current password");
 
                 let new_1 = get_password_input("🔑Provide a new password");
 
                 // !! must be decrypted before
-                let (updated, former_auth_key) = my_user.update_password(&old_1, new_1.as_str())?;
+                let  former_auth_key = my_user.update_password(&old_1, new_1.as_str())?;
 
-                if updated.clone().is_none() {
-                    log::error(format!("Invalid password, please re-sign in")).unwrap();
-                } else {
-                    let new_encrypted_user = updated.unwrap().encrypt()?;
-
-                    endpoints::update_password(&jwt, &new_encrypted_user, former_auth_key.as_str())
+                my_user.encrypt()?;
+                 
+                 endpoints::update_password(&jwt, &my_user, former_auth_key.as_str())
                         .await;
 
-                    log::success(format!("Password changed successfully")).unwrap();
-                }
+                log::success(format!("Password changed successfully")).unwrap();
+                
             }
 ,
             // about share ->
@@ -332,38 +330,38 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                             if selected_shared.is_none() {
                                 log::warning("No shared selected yet").unwrap();
                                 for sharing in shared_to_me {
-                                    let encrypted_dir =
-                                        endpoints::get_shared_entity(jwt, sharing).await;
+                                    let Some( mut encrypted_dir) =
+                                        endpoints::get_shared_entity(jwt, sharing).await else {
+                                            log::info("There is no content in this directory").unwrap();
+                                            break;
+                                        };
 
-                                    if encrypted_dir.is_some() {
+                                    
                                         log::warning(format!(
                                             "There is {}",
                                             shared_to_me.clone().len()
                                         ))
                                         .unwrap();
-
-                                        let decrypted_dir = encrypted_dir
-                                            .unwrap()
+                                        
+                                        // decrypted from this point
+                                        encrypted_dir
                                             .decrypt_from_dir_key(sharing.clone().key.unwrap())?;
 
-                                        let name = decrypted_dir.clone().show_name();
 
-                                        let icon = if decrypted_dir.clone().entity_type == "dir" {
+                                        let icon = if encrypted_dir.entity_type == "dir" {
                                             String::from("📂")
                                         } else {
                                             String::from("💾") // not really a file but fancy
                                         };
 
                                         items.push((
-                                            decrypted_dir.uid.clone().unwrap(),
-                                            format!("{} {}", icon, name),
+                                            encrypted_dir.uid.clone().unwrap(),
+                                            format!("{} {}", icon, encrypted_dir.show_name()),
                                             "",
                                         ));
 
-                                        decrypted_dirs.push(decrypted_dir);
-                                    } else {
-                                        log::info("There is no content in this directory").unwrap();
-                                    }
+                                        decrypted_dirs.push(encrypted_dir);
+                                
                                 }
                                 if items.len() == 0 {
                                     break;
@@ -633,54 +631,51 @@ async fn save_file_locally(name: &str, content: Vec<u8>, path: String, status: F
 async fn sign_in() -> Result<Option<(String, User)>, Box<dyn std::error::Error>> {
     let mut salt: Option<Vec<u8>> = None;
     let mut jwt: Option<String> = None;
-    let mut user: Option<User> = None;
-
-    while salt.is_none() || jwt.is_none() || user.is_none() {
+    let mut usr_password = String::from("");
+    while salt.is_none() || jwt.is_none() {
         let username = get_valid_input("Provide me a username", "Value is required!");
 
         salt = endpoints::get_salt(&username).await;
 
-        let usr_password = get_password_input("🔑Provide a password");
+        usr_password = get_password_input("🔑Provide a password");
 
         let (auth_key, _) = User::rebuild_secret(&usr_password.clone(), salt.clone())?;
 
         jwt = endpoints::sign_in(&username, auth_key.clone()).await;
-
-        if jwt.is_some() {
-            let fetched_user = endpoints::get_user(jwt.clone().unwrap().as_str()).await;
-
-            user = Some(fetched_user.unwrap().decrypt(&usr_password, salt.clone())?);
-        }
     }
 
-    Ok(Some((jwt.unwrap(), user.unwrap())))
+    let Some(mut fetched_user) = endpoints::get_user(jwt.clone().unwrap().as_str()).await else {
+        return Err("Unable to fetch user".into());
+    };
+
+    fetched_user.decrypt(&usr_password, salt.clone())?;
+
+    Ok(Some((jwt.unwrap(), fetched_user)))
 }
 
 async fn sign_up() -> Result<Option<(String, User)>, Box<dyn std::error::Error>> {
-    let mut user: Option<User> = None;
-
     let mut jwt = String::from("");
+    let mut username = String::from("");
+    let mut usr_password = String::from("");
 
     while jwt.is_empty() {
-        let username = get_valid_input("Provide a username", "Value is required!");
-        let usr_password = get_password_input("🔑Provide a password");
+        username = get_valid_input("Provide a username", "Value is required!");
+        usr_password = get_password_input("🔑Provide a password");
         jwt = endpoints::sign_up(&username, &usr_password)
             .await
             .unwrap()
             .unwrap();
-        if !jwt.is_empty() {
-            let fetched_user = endpoints::get_user(jwt.clone().as_str()).await;
-            let salt = endpoints::get_salt(&username).await.unwrap();
-
-            user = Some(
-                fetched_user
-                    .unwrap()
-                    .decrypt(&usr_password, Some(salt.clone()))?,
-            );
-        }
     }
 
-    Ok(Some((jwt, user.unwrap())))
+    let Some(mut fetched_user) = endpoints::get_user(jwt.clone().as_str()).await else {
+        return Err("Cannot get user".into());
+    };
+
+    let salt = endpoints::get_salt(&username).await.unwrap();
+
+    fetched_user.decrypt(&usr_password, Some(salt.clone()))?;
+
+    Ok(Some((jwt, fetched_user)))
 }
 
 fn get_valid_input(prompt: &str, error_msg: &str) -> String {

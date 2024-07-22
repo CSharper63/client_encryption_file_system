@@ -19,7 +19,25 @@ pub struct DataAsset {
     #[serde(with = "base58")]
     pub nonce: Option<Vec<u8>>,
     #[serde(skip_serializing)]
-    pub status: Option<DataState>,
+    pub state: Option<DataState>,
+}
+
+impl DataAsset {
+    pub fn encrypted(asset: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> DataAsset {
+        DataAsset {
+            asset,
+            nonce,
+            state: Some(DataState::Encrypted),
+        }
+    }
+
+    pub fn decrypted(asset: Option<Vec<u8>>, nonce: Option<Vec<u8>>) -> DataAsset {
+        DataAsset {
+            asset,
+            nonce,
+            state: Some(DataState::Decrypted),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -54,6 +72,26 @@ pub struct PublicKeyMaterial {
 }
 
 impl FsEntity {
+    pub fn new(
+        uid: Option<String>,
+        parent_id: Option<String>,
+        name: DataAsset,
+        path: String,
+        key: DataAsset,
+        entity_type: String,
+        content: Option<DataAsset>,
+    ) -> FsEntity {
+        FsEntity {
+            uid,
+            parent_id,
+            path,
+            name,
+            key,
+            content,
+            entity_type,
+        }
+    }
+
     // Before all must provide the current
     pub fn create(
         name: &str,
@@ -72,28 +110,22 @@ impl FsEntity {
             content_2_process = Some(DataAsset {
                 asset: content,
                 nonce: None,
-                status: Some(DataState::Decrypted),
+                state: Some(DataState::Decrypted),
             });
             String::from("file")
         };
 
-        Ok(FsEntity {
-            uid: None,
-            content: content_2_process,
-            parent_id: Some(parent_id.to_string()),
-            entity_type: entity_type,
-            path: path.to_string(),
-            name: DataAsset {
-                asset: Some(name.as_bytes().to_vec()),
-                nonce: None,
-                status: Some(DataState::Decrypted),
-            },
-            key: DataAsset {
-                asset: Some(dir_key),
-                nonce: None,
-                status: Some(DataState::Decrypted),
-            },
-        })
+        let created_entity = FsEntity::new(
+            None,
+            Some(parent_id.to_string()),
+            DataAsset::decrypted(Some(name.as_bytes().to_vec()), None),
+            path.to_string(),
+            DataAsset::decrypted(Some(dir_key), None),
+            entity_type,
+            content_2_process,
+        );
+
+        Ok(created_entity)
     }
 
     // symm key used is the parent dir key
@@ -129,16 +161,17 @@ impl FsEntity {
 
         spin.stop(format!("{} successfully encrypted", self.entity_type));
 
-        Ok(FsEntity {
-            uid: self.uid,
-            content: encrypted_content,
-            parent_id: self.parent_id,
-            entity_type: self.entity_type,
-            path: self.path, /* + &add_to_path(&base58_name_for_path) */
-            // only add the encrypted file name when encrypt the name before send it to the api
-            name: encrypted_name,
-            key: encrypted_key,
-        })
+        let encrypted_entity = FsEntity::new(
+            self.uid,
+            self.parent_id,
+            encrypted_name,
+            self.path,
+            encrypted_key,
+            self.entity_type,
+            encrypted_content,
+        );
+
+        Ok(encrypted_entity)
     }
 
     // happends when fetching tree from api so must be decrypted
@@ -170,11 +203,10 @@ impl FsEntity {
                 Err(_) => None,
             };
 
-            Some(DataAsset {
+            Some(DataAsset::decrypted(
                 asset,
-                nonce: self.content.unwrap().nonce.clone(),
-                status: Some(DataState::Decrypted),
-            })
+                self.content.unwrap().nonce.clone(),
+            ))
         } else {
             None
         };
@@ -182,26 +214,24 @@ impl FsEntity {
         // todo must be moved out there
         spin.stop(format!("{} successfully decrypted", self.entity_type));
 
-        Ok(FsEntity {
-            uid: self.uid,
-            parent_id: self.parent_id,
-            path: self.path,
-            entity_type: self.entity_type,
-            content: decrypted_content,
-            name: DataAsset {
-                asset: Some(decrypted_name),
-                nonce: self.name.nonce.clone(),
-                status: Some(DataState::Decrypted),
-            },
-            key: DataAsset {
-                asset: Some(decrypted_key),
-                nonce: self.key.nonce.clone(),
-                status: Some(DataState::Decrypted),
-            },
-        })
+        let name = DataAsset::decrypted(Some(decrypted_name), self.name.nonce.clone());
+
+        let key = DataAsset::decrypted(Some(decrypted_key), self.key.nonce.clone());
+
+        let decrypted_entity = FsEntity::new(
+            self.uid,
+            self.parent_id,
+            name,
+            self.path,
+            key,
+            self.entity_type,
+            decrypted_content,
+        );
+
+        Ok(decrypted_entity)
     }
 
-    pub fn decrypt_from_dir_key(self, dir_key: Vec<u8>) -> Result<FsEntity, Box<dyn Error>> {
+    pub fn decrypt_from_dir_key(&mut self, dir_key: Vec<u8>) -> Result<(), Box<dyn Error>> {
         // decrypt the entity key to decrypt the rest
         let mut spin = spinner();
         spin.start(format!("Decrypting {}...", self.entity_type));
@@ -223,33 +253,24 @@ impl FsEntity {
                 Err(_) => None,
             };
 
-            Some(DataAsset {
+            Some(DataAsset::decrypted(
                 asset,
-                nonce: self.content.unwrap().nonce.clone(),
-                status: Some(DataState::Decrypted),
-            })
+                self.content.as_ref().unwrap().nonce.clone(),
+            ))
         } else {
             None
         };
+
         spin.stop(format!("{} successfully decrypted", self.entity_type));
 
-        Ok(FsEntity {
-            uid: self.uid,
-            parent_id: self.parent_id,
-            path: self.path,
-            entity_type: self.entity_type,
-            content: decrypted_content,
-            name: DataAsset {
-                asset: Some(decrypted_name),
-                nonce: self.name.nonce.clone(),
-                status: Some(DataState::Decrypted),
-            },
-            key: DataAsset {
-                asset: Some(dir_key),
-                nonce: self.key.nonce.clone(),
-                status: Some(DataState::Decrypted),
-            },
-        })
+        let name = DataAsset::decrypted(Some(decrypted_name), self.name.nonce.clone());
+        let key = DataAsset::decrypted(Some(dir_key), self.key.nonce.clone());
+
+        self.name = name;
+        self.key = key;
+        self.content = decrypted_content;
+
+        Ok(())
     }
 
     /// Display name as string
@@ -287,6 +308,32 @@ pub struct User {
 }
 
 impl User {
+    pub fn new(
+        uid: Option<String>,
+        username: String,
+        symmetric_key: Vec<u8>,
+        clear_salt: Option<Vec<u8>>,
+        master_key: DataAsset,
+        auth_key: Option<Vec<u8>>,
+        public_key: Option<Vec<u8>>,
+        private_key: DataAsset,
+        shared_to_me: Option<Vec<Sharing>>,
+        shared_to_others: Option<Vec<Sharing>>,
+    ) -> User {
+        User {
+            uid,
+            username,
+            symmetric_key,
+            clear_salt,
+            master_key,
+            auth_key,
+            public_key,
+            private_key,
+            shared_to_me,
+            shared_to_others,
+        }
+    }
+
     pub fn generate(username: &str, password: &str) -> Result<Self, Box<dyn Error>> {
         let mut spin = spinner();
         spin.start("Generating your keys");
@@ -298,32 +345,30 @@ impl User {
 
         // user kdf to derive auth and symm key
         let (auth_key, symm_key) = crypto::kdf(hash)?;
-        // TODO handle if already created
+
         // asymm crypto -> generate public and private keys
         let (private_key, public_key) = crypto::generate_asymm_keys()?;
 
         spin.stop("Keys successfully generated");
+        let master_key = DataAsset::decrypted(Some(master_key), None);
+        let private_key = DataAsset::decrypted(Some(private_key), None);
 
-        Ok(User {
-            uid: None,
-            username: username.to_string(),
-            symmetric_key: symm_key,
-            clear_salt: Some(salt),
-            master_key: DataAsset {
-                asset: Some(master_key),
-                nonce: None,
-                status: Some(DataState::Decrypted),
-            },
-            auth_key: Some(auth_key),
-            public_key: Some(public_key),
-            private_key: DataAsset {
-                asset: Some(private_key),
-                nonce: None,
-                status: Some(DataState::Decrypted),
-            },
-            shared_to_me: Some(Vec::new()),
-            shared_to_others: Some(Vec::new()),
-        })
+        let new_user = Self::new(
+            None,
+            username.to_string(),
+            symm_key,
+            Some(salt),
+            master_key,
+            Some(auth_key),
+            Some(public_key),
+            private_key,
+            Some(Vec::new()),
+            Some(Vec::new()),
+        );
+
+        /*         println!("{:?}", new_user);
+         */
+        Ok(new_user)
     }
 
     pub fn find_sharing_by_entity_id(&self, entity_id: &str) -> Option<Sharing> {
@@ -358,9 +403,7 @@ impl User {
             self.shared_to_others = Some(Vec::new());
         }
 
-        // Ajouter le partage à la liste
         if let Some(shared_to_others) = &mut self.shared_to_others {
-            // Vérifier si le partage existe déjà pour éviter les doublons
             if !shared_to_others
                 .iter()
                 .any(|s| s.entity_uid == sharing.entity_uid)
@@ -376,6 +419,9 @@ impl User {
         salt: Option<Vec<u8>>,
     ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
         let mut spin = spinner();
+
+        /*         let salt = salt.unwrap_or(self.clear_salt.unwrap());
+         */
         spin.start("Rebuilding your keys...");
         // generate the hash from password, give the hash and the salt
         let (hash, _) = crypto::hash_password(password, salt)?;
@@ -387,53 +433,38 @@ impl User {
         Ok((auth_key, symm_key))
     }
 
-    pub fn encrypt(self) -> Result<User, Box<dyn Error>> {
+    pub fn encrypt(&mut self) -> Result<(), Box<dyn Error>> {
         let mut spin = spinner();
         spin.start("Encrypting your profile...");
         let symmetric_key = self.symmetric_key.clone();
         let mk = self.master_key.asset.clone();
 
         // encrypt the master and asymm private keys using symmetric key
-        let encrypted_master_key =
-            crypto::encrypt(symmetric_key.clone(), mk.clone(), self.master_key.nonce)?;
+        let encrypted_master_key = crypto::encrypt(
+            symmetric_key.clone(),
+            mk.clone(),
+            self.master_key.nonce.clone(),
+        )?;
 
-        let encrypted_private_key =
-            crypto::encrypt(mk.unwrap(), self.private_key.asset, self.private_key.nonce)?;
+        let encrypted_private_key = crypto::encrypt(
+            mk.unwrap(),
+            self.private_key.asset.clone(),
+            self.private_key.nonce.clone(),
+        )?;
 
         spin.stop("Profile successfully encrypted");
 
-        // this use is encrypted
-        Ok(User {
-            uid: self.uid,
-            symmetric_key,
-            username: self.username,
-            clear_salt: self.clear_salt,
-            master_key: DataAsset {
-                asset: encrypted_master_key.asset,
-                nonce: encrypted_master_key.nonce,
-                status: Some(DataState::Encrypted),
-            },
-            auth_key: self.auth_key,
-            public_key: self.public_key,
-            private_key: DataAsset {
-                asset: encrypted_private_key.asset,
-                nonce: encrypted_private_key.nonce,
-                status: Some(DataState::Encrypted),
-            },
-            shared_to_me: Some(Vec::new()),
-            shared_to_others: Some(Vec::new()),
-        })
+        self.master_key = encrypted_master_key;
+        self.private_key = encrypted_private_key;
+
+        Ok(())
     }
 
-    pub fn decrypt(
-        mut self,
-        password: &str,
-        salt: Option<Vec<u8>>,
-    ) -> Result<User, Box<dyn Error>> {
+    pub fn decrypt(&mut self, password: &str, salt: Option<Vec<u8>>) -> Result<(), Box<dyn Error>> {
         let mut spin = spinner();
         spin.start("Decrypting your profile...");
         // use the fetched salt to generate password hash
-        let (password_hash, auth_key) = crypto::hash_password(password, salt.clone())?;
+        let (password_hash, _) = crypto::hash_password(password, salt.clone())?;
 
         // retrieve user symm key using kdf from the password hash
         let (_, user_symm_key) = crypto::kdf(password_hash.try_into().unwrap_or_default())?;
@@ -442,17 +473,16 @@ impl User {
         let user_master_key = crypto::decrypt(
             user_symm_key.clone(),
             self.master_key.nonce.clone(),
-            self.master_key.asset,
-        )
-        .unwrap();
+            self.master_key.asset.clone(),
+        )?;
 
         // decrypt the private asymm key using user symm key
         let user_private_key = crypto::decrypt(
             user_master_key.clone(),
             self.private_key.nonce.clone(),
-            self.private_key.asset,
-        )
-        .unwrap();
+            self.private_key.asset.clone(),
+        )?;
+
         spin.stop("Profile successfully decrypted");
 
         if let Some(shared_to_me) = &mut self.shared_to_me {
@@ -467,75 +497,53 @@ impl User {
                 }
             }
         }
+        // we don't need it anymore as soon as we fetch and decrypted the content from the api
+        let mk = DataAsset::decrypted(Some(user_master_key), self.master_key.nonce.clone());
+        let pk = DataAsset::decrypted(Some(user_private_key), self.private_key.nonce.clone());
 
-        Ok(User {
-            uid: self.uid,
-            username: self.username,
-            symmetric_key: user_symm_key.clone(), // decrypted
-            clear_salt: salt,
-            auth_key: Some(auth_key), // decrypted
-            master_key: DataAsset {
-                asset: Some(user_master_key), // decrypted
-                nonce: self.master_key.nonce, // we don't need it anymore as soon as we fetch and decrypted the content from the api
-                status: Some(DataState::Decrypted),
-            },
-            public_key: self.public_key,
-            private_key: DataAsset {
-                asset: Some(user_private_key), // decrypted
-                nonce: self.private_key.nonce.clone(),
-                status: Some(DataState::Decrypted),
-            },
-            shared_to_me: self.shared_to_me,
-            shared_to_others: self.shared_to_others,
-        })
+        // update filed with decrypted content
+        self.symmetric_key = user_symm_key;
+        self.master_key = mk;
+        self.private_key = pk;
+
+        Ok(())
     }
 
+    // todo review, crash after changing
     pub fn update_password(
-        &self,
+        &mut self,
         old_password: &str,
         new_password: &str,
-    ) -> Result<(Option<User>, String), Box<dyn Error>> {
+    ) -> Result<String, Box<dyn Error>> {
         let mut spin = spinner();
         spin.start("Verifying your password...");
         // must verify that the password is good
+
         let (former_auth_key, symm_key) =
             User::rebuild_secret(old_password, self.clear_salt.clone())?;
 
-        if symm_key == self.symmetric_key {
-            spin.stop("Your password is valid");
-
-            let (hash, salt) = crypto::hash_password(new_password, None)?;
-
-            // user kdf to derive auth and symm key
-            let (auth_key, symm_key) = crypto::kdf(hash)?;
-
-            let master_key = DataAsset {
-                asset: self.master_key.clone().asset,
-                nonce: None,
-                status: Some(DataState::Decrypted),
-            };
-
-            return Ok((
-                Some(User {
-                    uid: self.uid.clone(),                 // - still the same
-                    username: self.username.to_string(),   // - still the same
-                    symmetric_key: symm_key,               // + changed
-                    clear_salt: Some(salt),                // + changed
-                    master_key: master_key,                // - still the same
-                    auth_key: Some(auth_key),              // + changed
-                    public_key: self.public_key.clone(),   // - still the same
-                    private_key: self.private_key.clone(), // - still the same
-                    shared_to_me: self.shared_to_me.clone(),
-                    shared_to_others: self.shared_to_others.clone(),
-                }),
-                bs58::encode(former_auth_key).into_string(),
-            ));
-        } else {
+        if symm_key != self.symmetric_key {
             spin.stop("Invalid credentials");
 
             // invalid password
-            Ok((None, "".to_string()))
+            return Err("Invalid credentials".into());
         }
+
+        spin.stop("Your password is valid");
+
+        let (hash, salt) = crypto::hash_password(new_password, None)?;
+
+        // user kdf to derive auth and symm key
+        let (auth_key, symm_key) = crypto::kdf(hash)?;
+
+        let master_key = DataAsset::decrypted(self.master_key.clone().asset, None);
+
+        self.symmetric_key = symm_key;
+        self.clear_salt = Some(salt);
+        self.auth_key = Some(auth_key);
+        self.master_key = master_key;
+
+        return Ok(bs58::encode(former_auth_key).into_string());
     }
 
     pub fn to_string(&self) -> String {
