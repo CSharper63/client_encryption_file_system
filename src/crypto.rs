@@ -17,6 +17,9 @@ use rsa::{
     sha2, Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
+const SYMMETRIC_KEY_SIZE: usize = 32; //in bytes,32 * 8 = 256 bits key
+const RSA_KEY_SIZE: usize = 4096; // in bit
+
 use crate::model::DataAsset;
 
 /// Use to encrypt data using extended chacha20poly1305.
@@ -25,10 +28,23 @@ pub fn encrypt(
     data: Option<Vec<u8>>,
     nonce: Option<Vec<u8>>,
 ) -> Result<DataAsset, Box<dyn Error>> {
+    if key.len() != SYMMETRIC_KEY_SIZE {
+        return Err(format!(
+            "Invalid key size. It must be {}. Current is {}",
+            SYMMETRIC_KEY_SIZE,
+            key.len()
+        )
+        .into());
+    }
+
     // check if data is present
     let Some(data) = data else {
         return Err("No plaintext provided".into());
     };
+
+    if data.is_empty() {
+        return Err("Data is empty".into());
+    }
 
     let stream = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
 
@@ -44,7 +60,7 @@ pub fn encrypt(
     Ok(encrypted)
 }
 
-/// Use to decrypt data using chacha20poly1305.
+/// Use to decrypt data using xchacha20poly1305.
 pub fn decrypt(
     key: Vec<u8>,
     nonce: Option<Vec<u8>>,
@@ -59,6 +75,10 @@ pub fn decrypt(
     let Some(data) = data else {
         return Err("No ciphertext provided".into());
     };
+
+    if data.is_empty() {
+        return Err("Data is empty".into());
+    }
 
     // decrypt
     let stream = XChaCha20Poly1305::new(GenericArray::from_slice(&key));
@@ -75,6 +95,10 @@ pub fn hash_password(
     plain_password: &str,
     salt: Option<Vec<u8>>,
 ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
+    if plain_password.is_empty() {
+        return Err("Password is empty".into());
+    }
+
     let salt = salt.unwrap_or(
         SaltString::generate(&mut OsRng)
             .to_string()
@@ -82,13 +106,13 @@ pub fn hash_password(
             .to_vec(),
     );
 
-    let Ok(params) = Params::new(1048576, 3, 1, Some(32)) else {
+    let Ok(params) = Params::new(1048576, 3, 1, Some(SYMMETRIC_KEY_SIZE)) else {
         return Err("Unable to init argon2id params".into());
     };
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
-    let mut hashed_password = [0u8; 32]; // Can be any desired size
+    let mut hashed_password = [0u8; SYMMETRIC_KEY_SIZE]; // Can be any desired size
 
     let _ = argon2.hash_password_into(
         plain_password.as_bytes(),
@@ -101,16 +125,15 @@ pub fn hash_password(
 
 /// Use to generate the master key, this key will be used to encrypt all the entity keys such as file/dir keys.
 pub fn generate_master_key() -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut key = [0u8; 32];
+    let mut key = [0u8; SYMMETRIC_KEY_SIZE];
     OsRng.fill_bytes(&mut key);
     Ok(key.to_vec())
 }
 
 /// Use to derive keys from input, in this case the input will be a password hash and the derivation will produce an auth key and a symmetric key.
 pub fn kdf(key_material: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
-    const OUTPUT_SIZE: usize = 32;
-    let mut auth_key = [0u8; OUTPUT_SIZE];
-    let mut symmetric_key = [0u8; OUTPUT_SIZE];
+    let mut auth_key = [0u8; SYMMETRIC_KEY_SIZE];
+    let mut symmetric_key = [0u8; SYMMETRIC_KEY_SIZE];
 
     let Ok(kdf) = Hkdf::<Sha256>::from_prk(&key_material.as_slice()) else {
         return Err("Unable to generate kdf from key".into());
@@ -128,9 +151,8 @@ pub fn kdf(key_material: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> 
 /// Use to generate asymmetric public/private keys-pair using RSA-OAEP 4096
 pub fn generate_asymm_keys() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
     let mut rng = OsRng;
-    let bits = 4096;
 
-    let Ok(priv_key) = RsaPrivateKey::new(&mut rng, bits) else {
+    let Ok(priv_key) = RsaPrivateKey::new(&mut rng, RSA_KEY_SIZE) else {
         return Err("Unable to generate RSA private key".into());
     };
 
@@ -149,6 +171,10 @@ pub fn generate_asymm_keys() -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
 
 /// Use RSA-OAEP to encrypt the data using the public key
 pub fn encrypt_asymm(public_key: Vec<u8>, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    if public_key.is_empty() {
+        return Err("Public key is empty".into());
+    }
+
     let padding = Oaep::new::<Sha256>();
 
     let public_key =
@@ -165,6 +191,14 @@ pub fn decrypt_asymm(
     private_key_bytes: Vec<u8>,
     encrypted_data: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
+    if private_key_bytes.is_empty() {
+        return Err("Private key is empty".into());
+    }
+
+    if encrypted_data.is_empty() {
+        return Err("Data is empty".into());
+    }
+
     let padding = Oaep::new::<Sha256>();
 
     let priv_key = RsaPrivateKey::from_pkcs8_der(&private_key_bytes)?;
