@@ -105,8 +105,8 @@ pub fn hash_password(
             .as_bytes()
             .to_vec(),
     );
-
-    let Ok(params) = Params::new(1048576, 3, 1, Some(SYMMETRIC_KEY_SIZE)) else {
+    // 2^19
+    let Ok(params) = Params::new(524288, 3, 1, Some(SYMMETRIC_KEY_SIZE)) else {
         return Err("Unable to init argon2id params".into());
     };
 
