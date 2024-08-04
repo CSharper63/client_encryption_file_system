@@ -49,6 +49,22 @@ pub struct Sharing {
     pub user_id: String,    // User id I share with
 }
 
+impl Sharing {
+    pub fn new(
+        key: Option<Vec<u8>>,
+        entity_uid: String,
+        owner_id: String,
+        user_id: String,
+    ) -> Self {
+        Sharing {
+            key,
+            entity_uid,
+            owner_id,
+            user_id,
+        }
+    }
+}
+
 #[serde_as]
 #[derive(Default, PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 pub struct FsEntity {
@@ -80,7 +96,7 @@ impl FsEntity {
         key: DataAsset,
         entity_type: String,
         content: Option<DataAsset>,
-    ) -> FsEntity {
+    ) -> Self {
         FsEntity {
             uid,
             parent_id,
@@ -129,14 +145,14 @@ impl FsEntity {
     }
 
     // symm key used is the parent dir key
-    pub fn encrypt(self, parent_key: Vec<u8>) -> Result<FsEntity, Box<dyn Error>> {
+    pub fn encrypt(&mut self, parent_key: Vec<u8>) -> Result<(), Box<dyn Error>> {
         let mut spin = spinner();
         spin.start(format!("Encrypting {}...", self.entity_type));
         // if the dir has already been encrypted a time, use the nonce to reencrypt
         let encrypted_name = crypto::encrypt(
             self.key.clone().asset.unwrap(),
-            self.name.asset,
-            self.name.nonce,
+            self.name.asset.clone(),
+            self.name.nonce.clone(),
         )?;
 
         let encrypted_key = crypto::encrypt(
@@ -150,9 +166,9 @@ impl FsEntity {
         if self.entity_type == "file" {
             // if it is a file it must be encrypted with its own key
             encrypted_content = match crypto::encrypt(
-                self.key.asset.unwrap(), // for a file the content
+                self.key.asset.clone().unwrap(), // for a file the content
                 self.content.clone().unwrap().asset,
-                self.content.unwrap().nonce,
+                self.content.clone().unwrap().nonce,
             ) {
                 Ok(ciphertext) => Some(ciphertext),
                 Err(_) => None,
@@ -160,36 +176,29 @@ impl FsEntity {
         }
 
         spin.stop(format!("{} successfully encrypted", self.entity_type));
+        self.name = encrypted_name;
+        self.key = encrypted_key;
+        self.content = encrypted_content;
 
-        let encrypted_entity = FsEntity::new(
-            self.uid,
-            self.parent_id,
-            encrypted_name,
-            self.path,
-            encrypted_key,
-            self.entity_type,
-            encrypted_content,
-        );
-
-        Ok(encrypted_entity)
+        Ok(())
     }
 
     // happends when fetching tree from api so must be decrypted
-    pub fn decrypt(self, parent_key: Vec<u8>) -> Result<FsEntity, Box<dyn Error>> {
+    pub fn decrypt(&mut self, parent_key: Vec<u8>) -> Result<(), Box<dyn Error>> {
         let mut spin = spinner();
         spin.start(format!("Decrypting {}...", self.entity_type));
         // decrypt the entity key to decrypt the rest
         let decrypted_key = crypto::decrypt(
             parent_key.clone(),
             self.key.nonce.clone(),
-            self.key.clone().asset,
+            self.key.asset.clone(),
         )?;
 
         // decrpyted with own key
         let decrypted_name = crypto::decrypt(
             decrypted_key.clone(),
             self.name.nonce.clone(),
-            self.name.clone().asset,
+            self.name.asset.clone(),
         )?;
 
         // todo improve code quality
@@ -205,7 +214,7 @@ impl FsEntity {
 
             Some(DataAsset::decrypted(
                 asset,
-                self.content.unwrap().nonce.clone(),
+                self.content.clone().unwrap().nonce.clone(),
             ))
         } else {
             None
@@ -218,17 +227,11 @@ impl FsEntity {
 
         let key = DataAsset::decrypted(Some(decrypted_key), self.key.nonce.clone());
 
-        let decrypted_entity = FsEntity::new(
-            self.uid,
-            self.parent_id,
-            name,
-            self.path,
-            key,
-            self.entity_type,
-            decrypted_content,
-        );
+        self.name = name;
+        self.key = key;
+        self.content = decrypted_content;
 
-        Ok(decrypted_entity)
+        Ok(())
     }
 
     pub fn decrypt_from_dir_key(&mut self, dir_key: Vec<u8>) -> Result<(), Box<dyn Error>> {
@@ -239,7 +242,7 @@ impl FsEntity {
         let decrypted_name = crypto::decrypt(
             dir_key.clone(),
             self.name.nonce.clone(),
-            self.name.clone().asset,
+            self.name.asset.clone(),
         )
         .unwrap();
 
@@ -319,7 +322,7 @@ impl User {
         private_key: DataAsset,
         shared_to_me: Option<Vec<Sharing>>,
         shared_to_others: Option<Vec<Sharing>>,
-    ) -> User {
+    ) -> Self {
         User {
             uid,
             username,
@@ -366,17 +369,28 @@ impl User {
             Some(Vec::new()),
         );
 
-        /*         println!("{:?}", new_user);
-         */
         Ok(new_user)
     }
 
-    pub fn find_sharing_by_entity_id(&self, entity_id: &str) -> Option<Sharing> {
-        self.shared_to_others
-            .as_ref()?
+    pub fn find_sharing_by_entity_id(&self, entity_id: &str) -> Result<Sharing, Box<dyn Error>> {
+        let error_message = Err("No sharing found".into());
+
+        let Some(share) = self
+            .shared_to_others
+            .as_ref()
+            .unwrap_or(&Vec::new()) // avoid crash
             .iter()
             .find(|sharing| sharing.entity_uid == entity_id)
             .cloned()
+        else {
+            return error_message;
+        };
+
+        if share.entity_uid.is_empty() {
+            return error_message;
+        }
+
+        Ok(share)
     }
 
     pub fn is_entity_shared(&self, entity_id: &str) -> bool {
@@ -420,8 +434,6 @@ impl User {
     ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
         let mut spin = spinner();
 
-        /*         let salt = salt.unwrap_or(self.clear_salt.unwrap());
-         */
         spin.start("Rebuilding your keys...");
         // generate the hash from password, give the hash and the salt
         let (hash, _) = crypto::hash_password(password, salt)?;
@@ -456,6 +468,23 @@ impl User {
 
         self.master_key = encrypted_master_key;
         self.private_key = encrypted_private_key;
+
+        Ok(())
+    }
+
+    pub fn erase_secret(&mut self) -> Result<(), Box<dyn Error>> {
+        let empty = DataAsset::decrypted(None, None);
+
+        self.uid = None;
+        self.username = "".to_string();
+        self.symmetric_key = Vec::new();
+        self.clear_salt = None;
+        self.master_key = empty.clone();
+        self.auth_key = None;
+        self.public_key = None;
+        self.private_key = empty.clone();
+        self.shared_to_others = None;
+        self.shared_to_me = None;
 
         Ok(())
     }
