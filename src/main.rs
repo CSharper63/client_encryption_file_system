@@ -18,7 +18,7 @@ pub mod model;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    intro("Welcome to encryption client").unwrap();
+    intro("Welcome to encryption client")?;
     loop {
         // select if you already got an account or not
 
@@ -29,34 +29,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "\x1b[1mNOPE\x1b[0m, let me discover it",
                 "looser",
             )
-            .interact()
-            .unwrap();
+            .interact()?;
 
         // check if you need to sign in or sign up
         match selected {
             // this case handle existing account
             "sign_in" => {
-                if let Ok(Some((jwt, my_user))) = sign_in().await {
-                    navigate_over(my_user, jwt.as_str()).await;
+                if let Ok(Some((jwt,mut my_user))) = sign_in().await {
+                    navigate_over(&mut my_user, jwt.as_str()).await?;
                 }
             }
             // handle new account
             "sign_up" => {
-                if let Ok(Some((jwt, my_user))) = sign_up().await {
-                    navigate_over(my_user, jwt.as_str()).await;
+                if let Ok(Some((jwt, mut my_user))) = sign_up().await {
+                    navigate_over(&mut my_user, jwt.as_str()).await?;
                 }
             }
-            _ => log::error("Hmmm you are not supposed to be there").unwrap(),
+            _ => log::error("Hmmm you are not supposed to be there")?,
         }
 
         // Do stuff
-        log::info("Bye bye").unwrap();
+        log::info("Bye bye")?;
     }
 }
 
 // !! can be factorised
-async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::error::Error>> {
-    log::success(format!("Welcome Mr. {}", my_user.clone().username)).unwrap();
+async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std::error::Error>> {
+    log::success(format!("Welcome Mr. {}", my_user.clone().username))?;
 
     let mut current_path: String = "".to_string(); // current path when navigate over the tree
     let mut encrypted_path: String = "".to_string();
@@ -70,7 +69,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
     let mut chain_of_dirs: Vec<FsEntity> = Vec::default();
 
     Ok(loop {
-        log::info(format!(" -> 📁 You are here: /{}", current_path.clone())).unwrap();
+        log::info(format!(" -> 📁 You are here: /{}", current_path.clone()))?;
 
         // if we want o modifiy the tree -> modify dirs_refs_to_process
         items.clear();
@@ -95,7 +94,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
         }
 
         // Afficher la liste pour la sélection par l'utilisateur
-        let selected: &str = select("What about now ?").items(&items).interact().unwrap();
+        let selected: &str = select("What about now ?").items(&items).interact()?;
 
         let symm_key = if parent_id.is_empty() {
             my_user.clone().master_key.clone().asset.unwrap()
@@ -105,20 +104,23 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
 
         // contains all ref to the dir
         match selected {
-            "sign_out" => break,
+            "sign_out" =>{
+my_user.erase_secret()?;
+break;
+            },
             "create_dir" => {
                 // ask user for a dir name
                 let dir_name = get_valid_input("Provide me a directory name", "Name is required!");
 
                 // generate dir -> content:None
-                let new_dir =
+                let mut new_dir =
                     FsEntity::create(dir_name.as_str(), &encrypted_path, None, &parent_id)?; // so it s a file
 
                 // compute which key will encrypt the dir -> if at root -> user mk else parent dir key
 
-                let encr_dir = new_dir.clone().encrypt(symm_key)?;
+                new_dir.encrypt(symm_key)?;
 
-                endpoints::create_dir(jwt, &encr_dir.clone()).await;
+                endpoints::create_dir(jwt, &new_dir).await;
             },
             "add_file" => {
                 let path = get_valid_input(
@@ -136,16 +138,16 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
 
                 //let contents = fs::read(&path).unwrap();
 
-                let new_file = FsEntity::create(
+                let mut new_file = FsEntity::create(
                     file_name,
                     &encrypted_path,
                     Some(content.clone()),
                     &parent_id.clone(),
                 )?;
 
-                let encrypted_file = new_file.clone().encrypt(symm_key.clone())?;
+                 new_file.encrypt(symm_key.clone())?;
 
-                endpoints::add_file(jwt, &encrypted_file).await.unwrap();
+                endpoints::add_file(jwt, &new_file).await.unwrap();
             },
             "list_content" => {
                 // Fetch directories or files from the endpoint
@@ -159,29 +161,32 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                 let mut items: Vec<(String, String, &str)> = Vec::new(); // Items to select
                 let mut decrypted_dirs: Vec<FsEntity> = Vec::new(); // Decrypted directories
 
+                let mut dirs = fetched_dirs.unwrap();
+
                 // Iterate and decrypt directories
-                for dir in fetched_dirs.as_ref().unwrap().iter() {
-                    let decrypted_dir = if parent_id.is_empty() {
-                        dir.clone()
-                            .decrypt(my_user.master_key.asset.clone().unwrap())?
+                for dir in dirs.iter_mut() {
+  
+                    let key_2_use = if parent_id.is_empty() {
+                        my_user.master_key.asset.clone()
                     } else {
-                        dir.clone()
-                            .decrypt(selected_dir.as_ref().unwrap().key.asset.clone().unwrap())?
+                        selected_dir.as_ref().unwrap().key.asset.clone()
                     };
 
-                    decrypted_dirs.push(decrypted_dir.clone());
-                    let name = decrypted_dir.show_name();
-                    let icon = if dir.entity_type == "dir" {
-                        "📂"
-                    } else {
-                        "💾"
-                    };
+                    dir.decrypt(key_2_use.unwrap())?;
+
+                    let name = dir.show_name();
+
+                    decrypted_dirs.push(dir.clone());
+
+                    let icon = if dir.entity_type == "dir" { "📂" } else { "💾" };
+
                     let shared_status =
                         if my_user.is_entity_shared(dir.uid.clone().unwrap().as_str()) {
                             "Shared"
                         } else {
                             ""
                         };
+                    println!("Well ok everything is ok there");
 
                     items.push((
                         dir.uid.clone().unwrap(),
@@ -214,9 +219,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                     selected_dir = selected_element;
                     parent_id = selected_id;
                     chain_of_dirs.push(selected_dir.as_ref().unwrap().clone());
-                    let encry_selected_dir = fetched_dirs
-                        .as_ref()
-                        .unwrap()
+                    let encry_selected_dir = dirs
                         .iter()
                         .find(|d| d.uid.clone().unwrap() == parent_id);
 
@@ -276,6 +279,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                             }
                         }
                         "download" => {
+                            
                             download_decrypted(
                                 jwt,
                                 &selected_file.as_ref().unwrap(),
@@ -303,9 +307,11 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                  
                  endpoints::update_password(&jwt, &my_user, former_auth_key.as_str())
                         .await;
+                my_user.erase_secret()?;
 
-                log::success(format!("Password changed successfully")).unwrap();
-                
+                log::success(format!("Password changed successfully"))?;
+
+                break;
             }
 ,
             // about share ->
@@ -315,9 +321,9 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
             "list_shared_with_me" => {
                 if let Some(shared_to_me) = my_user.shared_to_me.as_ref() {
                     if shared_to_me.is_empty() {
-                        log::info("No items have been shared with you").unwrap();
+                        log::info("No items have been shared with you")?;
                     } else {
-                        log::info("Items shared with you:").unwrap();
+                        log::info("Items shared with you:")?;
 
                         let mut parent_id = "".to_string();
 
@@ -330,9 +336,9 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                             if selected_shared.is_none() {
                                 log::warning("No shared selected yet").unwrap();
                                 for sharing in shared_to_me {
-                                    let Some( mut encrypted_dir) =
+                                    let Ok(mut encrypted_dir) =
                                         endpoints::get_shared_entity(jwt, sharing).await else {
-                                            log::info("There is no content in this directory").unwrap();
+                                            log::info("There is no content in this directory")?;
                                             break;
                                         };
 
@@ -340,8 +346,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                         log::warning(format!(
                                             "There is {}",
                                             shared_to_me.clone().len()
-                                        ))
-                                        .unwrap();
+                                        ))?;
                                         
                                         // decrypted from this point
                                         encrypted_dir
@@ -378,7 +383,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
 
                                 if fetched_dirs.is_some() {
                                     for dir in fetched_dirs.clone().unwrap().iter_mut() {
-                                        let decrypted_dir = if parent_id.is_empty() {
+                                        if parent_id.is_empty() {
                                             // if parent_id is empty it means are in the top of the share tree
                                             dir.clone().decrypt(
                                                 selected_shared.clone().unwrap().key.unwrap(),
@@ -396,9 +401,9 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                             )?
                                         };
 
-                                        decrypted_dirs.push(decrypted_dir.clone());
+                                        decrypted_dirs.push(dir.clone());
 
-                                        let name = decrypted_dir.clone().show_name();
+                                        let name = dir.show_name();
 
                                         let icon = if dir.clone().entity_type == "dir" {
                                             String::from("📂")
@@ -413,7 +418,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                         ));
                                     }
                                 } else {
-                                    log::info("There is no content in this directory").unwrap();
+                                    log::info("There is no content in this directory")?;
                                 }
                                 if items.len() == 0 {
                                     break;
@@ -425,7 +430,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                 .items(items.as_ref())
                                 .interact()
                                 .unwrap();
-                            log::warning(format!("Dossier selectioné is {}", selected_id)).unwrap();
+                            log::warning(format!("Dossier selectioné is {}", selected_id))?;
 
                             // contains the selected shared -> so we will dig into is tree
                             if selected_shared.is_none() {
@@ -467,8 +472,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                     select("What do you want to do with this file?")
                                         .item("download", "Download it", "")
                                         .item("back", "Back", "")
-                                        .interact()
-                                        .unwrap();
+                                        .interact()?;
                                 match selected {
                                     "download" => {
                                         download_decrypted(
@@ -488,7 +492,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                         }
                     }
                 } else {
-                    log::info("No items have been shared with you").unwrap();
+                    log::info("No items have been shared with you")?;
                 }
             },
 
@@ -503,8 +507,7 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                                 Ok(())
                             }
                         })
-                        .interact()
-                        .unwrap();
+                        .interact()?;
 
                 // get the public key of the user I want to share my dir with
                 let pb_mat = endpoints::get_public_key_with_uid(&jwt, &username).await;
@@ -528,26 +531,23 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                         current_is_shared = true;
                     }
                     Err(e) => {
-                        log::error(format!("Encryption error: {}", e)).unwrap();
+                        log::error(format!("Encryption error: {}", e))?;
                     }
                 }
             },
-
             "revoke_share" => {
-                let share_2_revoke = my_user.find_sharing_by_entity_id(
+                let Ok(share_2_revoke) = my_user.find_sharing_by_entity_id(
                     selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
-                );
-
-                if share_2_revoke.is_some() {
-                    let ok = endpoints::revoke_share(jwt, share_2_revoke.as_ref().unwrap()).await;
-                    if ok.is_some() {
-                        my_user.revoke_share(
-                            selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
-                        );
-                        current_is_shared = false;
-                    }
-                } else {
-                    log::warning("This item is not shared yet").unwrap();
+                ) else{
+                    log::warning("This item is not shared yet")?;
+                    break;
+                };
+                let ok = endpoints::revoke_share(jwt, &share_2_revoke).await;
+                if ok.is_some() {
+                    my_user.revoke_share(
+                        selected_dir.as_ref().unwrap().clone().uid.unwrap().as_str(),
+                    );
+                    current_is_shared = false;
                 }
             },
             "back" => {
@@ -566,13 +566,13 @@ async fn navigate_over(mut my_user: User, jwt: &str) -> Result<(), Box<dyn std::
                     selected_dir = Some(chain_of_dirs.last().cloned().unwrap());
                 }
             },
-            _ => log::error("Hmmm you are not supposed to be there").unwrap(),
+            _ => log::error("Hmmm you are not supposed to be there")?,
         };
     })
 }
 
 fn add_to_path(current_path: &str, element: &str) -> String {
-    if current_path == "" {
+    if current_path.is_empty() {
         format!("{}", element)
     } else {
         format!("{}/{}", current_path, element)
