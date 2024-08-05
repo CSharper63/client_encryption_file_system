@@ -6,9 +6,11 @@ use cliclack::{
 };
 use reqwest::{Client, StatusCode};
 
-use model::User;
-
-use crate::model::{self, FsEntity, PublicKeyMaterial, Sharing};
+use crate::models::{
+    fs_entity::{FsEntity, PublicKeyMaterial},
+    sharing::Sharing,
+    user::User,
+};
 
 static URL: &str = "https://127.0.0.1:443";
 
@@ -616,11 +618,14 @@ pub async fn get_shared_children(
     }
 }
 
-pub async fn get_shared_entity(auth_token: &str, share: &Sharing) -> Option<FsEntity> {
+pub async fn get_shared_entity(
+    auth_token: &str,
+    share: &Sharing,
+) -> Result<FsEntity, Box<dyn Error>> {
     let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching element...");
-    match client
+    let Ok(res) = client
         .get(format!(
             "{}/get_shared_entity?auth_token={}",
             URL.to_string(),
@@ -629,36 +634,27 @@ pub async fn get_shared_entity(auth_token: &str, share: &Sharing) -> Option<FsEn
         .json(share)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Element successfully fetched");
+    else {
+        return Err("Cannot reach the server".into());
+    };
 
-                let fetched_dir: FsEntity =
-                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
+    let status = res.status();
 
-                return Some(fetched_dir);
-            }
-            _ => {
-                spin.stop("Error while fetching your element");
+    let Ok(content) = res.text().await else {
+        return Err("Unable to fetch request content".into());
+    };
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching your element");
-
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
+    if status != StatusCode::OK {
+        // any other ->
+        log::error(format!("{}", content)).unwrap();
     }
+    // only for ok
+    spin.stop("Element successfully fetched");
+
+    let fetched_dir: FsEntity = serde_json::from_str(&content)?;
+
+    // not ok
+    spin.stop("Error while fetching your element");
+
+    return Ok(fetched_dir);
 }

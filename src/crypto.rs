@@ -17,10 +17,10 @@ use rsa::{
     sha2, Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
+use crate::models::data_asset::DataAsset;
+
 const SYMMETRIC_KEY_SIZE: usize = 32; //in bytes,32 * 8 = 256 bits key
 const RSA_KEY_SIZE: usize = 4096; // in bit
-
-use crate::model::DataAsset;
 
 /// Use to encrypt data using extended chacha20poly1305.
 pub fn encrypt(

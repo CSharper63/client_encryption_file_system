@@ -1,12 +1,13 @@
-use crate::model::FsEntity;
 use cliclack::input;
 use cliclack::intro;
 use cliclack::log;
 use cliclack::password;
 use cliclack::select;
 use cliclack::spinner;
-use model::Sharing;
-use model::User;
+use models::fs_entity::FsEntity;
+use models::sharing::Sharing;
+use models::user::User;
+
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -14,7 +15,7 @@ use std::io::Read;
 use std::path::Path;
 pub mod crypto;
 pub mod endpoints;
-pub mod model;
+pub mod models;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,10 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std::error::Error>> {
     log::success(format!("Welcome Mr. {}", my_user.clone().username))?;
 
-    let mut current_path: String = "".to_string(); // current path when navigate over the tree
-    let mut encrypted_path: String = "".to_string();
-
-    let mut parent_id: String = "".to_string();
+    let (mut current_path, mut encrypted_path, mut parent_id) =
+        ("".to_string(), "".to_string(), "".to_string()); // current path when navigate over the tree
 
     let mut selected_dir: Option<FsEntity> = None;
     let mut items: Vec<(&str, &str, &str)> = Vec::default();
@@ -147,21 +146,20 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
 
                 new_file.encrypt(symm_key.clone())?;
 
-                endpoints::add_file(jwt, &new_file).await.unwrap();
+                endpoints::add_file(jwt, &new_file).await;
             }
             "list_content" => {
                 // Fetch directories or files from the endpoint
                 let fetched_dirs = endpoints::get_children(&jwt, parent_id.as_str()).await;
+                let mut dirs = fetched_dirs.unwrap();
 
-                if fetched_dirs.as_ref().unwrap().len() == 0 {
+                if dirs.is_empty() {
                     log::info("There is no content in this directory").unwrap();
                     continue;
                 }
 
                 let mut items: Vec<(String, String, &str)> = Vec::new(); // Items to select
                 let mut decrypted_dirs: Vec<FsEntity> = Vec::new(); // Decrypted directories
-
-                let mut dirs = fetched_dirs.unwrap();
 
                 // Iterate and decrypt directories
                 for dir in dirs.iter_mut() {
@@ -189,7 +187,6 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
                         } else {
                             ""
                         };
-                    println!("Well ok everything is ok there");
 
                     items.push((
                         dir.uid.clone().unwrap(),
@@ -198,16 +195,13 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
                     ));
                 }
 
-                if items.len() == 0 {
+                if items.is_empty() {
                     break;
                     //continue;
                 }
 
                 // User selection interaction
-                let selected_id = cliclack::select("Pick an item")
-                    .items(&items)
-                    .interact()
-                    .unwrap();
+                let selected_id = cliclack::select("Pick an item").items(&items).interact()?;
 
                 let selected_element = Some(
                     decrypted_dirs
@@ -239,8 +233,7 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
                         .item("share_file", "Share this file", "")
                         .item("download", "Download it", "")
                         .item("back", "Back", "")
-                        .interact()
-                        .unwrap();
+                        .interact()?;
                     match selected {
                         "share_file" => {
                             let username = get_valid_input(
@@ -252,33 +245,25 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
                             let pb_mat = endpoints::get_public_key_with_uid(&jwt, &username).await;
 
                             // encrypt the dir key with the user public key
-                            match crypto::encrypt_asymm(
+                            let Ok(encrypted_key) = crypto::encrypt_asymm(
                                 pb_mat.clone().unwrap().public_key.unwrap(),
                                 selected_file.as_ref().unwrap().key.asset.clone().unwrap(),
-                            ) {
-                                Ok(encrypted_key) => {
-                                    let element_expected_2_be_shared = Sharing {
-                                        entity_uid: selected_file
-                                            .as_ref()
-                                            .unwrap()
-                                            .clone()
-                                            .uid
-                                            .unwrap(),
-                                        key: Some(encrypted_key),
-                                        owner_id: my_user.clone().uid.clone().unwrap(),
-                                        user_id: pb_mat.clone().unwrap().owner_id.unwrap(),
-                                    };
+                            ) else {
+                                log::error(format!("Encryption error")).unwrap();
+                                break;
+                            };
 
-                                    endpoints::share_entity(&jwt, &element_expected_2_be_shared)
-                                        .await;
+                            let element_expected_2_be_shared = Sharing {
+                                entity_uid: selected_file.as_ref().unwrap().clone().uid.unwrap(),
+                                key: Some(encrypted_key),
+                                owner_id: my_user.clone().uid.clone().unwrap(),
+                                user_id: pb_mat.clone().unwrap().owner_id.unwrap(),
+                            };
 
-                                    my_user.share(&element_expected_2_be_shared);
-                                    current_is_shared = true;
-                                }
-                                Err(e) => {
-                                    log::error(format!("Encryption error: {}", e)).unwrap();
-                                }
-                            }
+                            endpoints::share_entity(&jwt, &element_expected_2_be_shared).await;
+
+                            my_user.share(&element_expected_2_be_shared);
+                            current_is_shared = true;
                         }
                         "download" => {
                             download_decrypted(
@@ -492,7 +477,6 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
                     log::info("No items have been shared with you")?;
                 }
             }
-
             "share_entity" => {
                 let username: String =
                     cliclack::input("Please enter the username you want to share the element with")
