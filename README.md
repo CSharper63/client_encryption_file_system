@@ -20,3 +20,6 @@ For more details about the security model [have a look there](https://maxime.cha
 ```bash
 cargo run --release
 ```
+
+> [!CAUTION] 
+> This application is currently under refactoring, you may get some issue while executing it.

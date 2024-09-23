@@ -4,6 +4,7 @@ use cliclack::{
     log::{self},
     spinner,
 };
+use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode};
 
 use crate::models::{
@@ -14,49 +15,42 @@ use crate::models::{
 
 static URL: &str = "http://127.0.0.1:8080";
 
+static CLIENT: Lazy<Client> = Lazy::new(|| Client::new());
+
 pub async fn sign_up(username: &str, password: &str) -> Result<Option<String>, Box<dyn Error>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Connnecting...");
     // create the user -> contains secret content
     let mut new_plain_user = User::generate(username, password)?;
     new_plain_user.encrypt()?;
 
-    match client
+    let Ok(res) = CLIENT
         .get(format!("{}/get_sign_up", URL.to_string()))
         .json(&new_plain_user)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::CREATED => {
-                spin.stop("Account successfully created");
+    else {
+        spin.stop("Error while creating your account");
 
-                let jwt = res.text().await.unwrap();
+        return Err("Error while creating your account".into());
+    };
 
-                Ok(Some(jwt))
+    let StatusCode::CREATED = res.status() else {
+        spin.stop("Error while creating your account");
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => Ok({
-                spin.stop("Error while creating your account");
+        ))
+        .unwrap();
+        return Ok(None);
+    };
 
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }),
-        },
-        Err(e) => Ok({
-            spin.stop("Error while creating your account");
-
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }),
-    }
+    spin.stop("Account successfully created");
+    let jwt = res.text().await.unwrap();
+    Ok(Some(jwt))
 }
 
 pub async fn update_password(
@@ -64,56 +58,49 @@ pub async fn update_password(
     updated_user: &User,
     former_auth_key: &str,
 ) -> Option<String> {
-    let client = Client::new();
-
     // create the user -> contains secret content
     let mut spin = spinner();
     spin.start("Updating your password...");
 
-    match client
+    let Ok(res) = CLIENT
         .post(format!(
-            "{}/auth/update_password?auth_token={}&former_auth_key={}",
+            "{}/auth/update_password&former_auth_key={}",
             URL.to_string(),
-            auth_token,
             former_auth_key
         ))
+        .bearer_auth(auth_token)
         .json(&updated_user)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Password updated successfully");
-                Some("Password updated successfully".to_string())
-            }
-            _ => {
-                spin.stop("Error while updating your password");
+    else {
+        spin.stop("Error while updating your password");
 
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while updating your password");
+        return None;
+    };
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while updating your password");
+
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
+            }
+        ))
+        .unwrap();
+        return None;
+    };
+
+    spin.stop("Password updated successfully");
+    Some("Password updated successfully".to_string())
 }
 
 pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Connecting...");
-    match client
+
+    let Ok(res) = CLIENT
         .get(format!(
             "{}/get_sign_in?username={}&auth_key={}",
             URL.to_string(),
@@ -122,87 +109,69 @@ pub async fn sign_in(username: &str, auth_key: Vec<u8>) -> Option<String> {
         ))
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Signed in your account successfully");
-                let jwt = res.text().await.unwrap();
+    else {
+        return None;
+    };
 
-                Some(jwt)
+    let StatusCode::OK = res.status() else {
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            log::error(format!(" {}", e.to_string())).unwrap();
-            None
-        }
-    }
+        ))
+        .unwrap();
+        return None;
+    };
+    spin.stop("Signed in your account successfully");
+    let jwt = res.text().await.unwrap();
+
+    Some(jwt)
 }
 
 pub async fn get_user(auth_token: &str) -> Option<User> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching your details...");
-    match client
-        .get(format!(
-            "{}/get_user?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+    let Ok(res) = CLIENT
+        .get(format!("{}/get_user", URL.to_string(),))
+        .bearer_auth(auth_token)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Details successfully fetched");
-                let expected_user: User =
-                    match serde_json::from_str(res.text().await.unwrap().as_str()) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            log::error(format!("{}", e.to_string())).unwrap();
-                            return None;
-                        }
-                    };
-                Some(expected_user)
-            }
-            _ => {
-                spin.stop("Error while fetching details");
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching details");
+    else {
+        spin.stop("Error while fetching details");
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+        return None;
+    };
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while fetching details");
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
+            }
+        ))
+        .unwrap();
+        spin.stop("Error while fetching details");
+
+        return None;
+    };
+
+    let Ok(expected_user) = serde_json::from_str(res.text().await.unwrap().as_str()) else {
+        return None;
+    };
+
+    spin.stop("Details successfully fetched");
+
+    Some(expected_user)
 }
 
 pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("🧂 Fetching your salt...");
 
-    match client
+    let Ok(res) = CLIENT
         .get(format!(
             "{}/auth/get_salt?username={}",
             URL.to_string(),
@@ -210,361 +179,274 @@ pub async fn get_salt(username: &str) -> Option<Vec<u8>> {
         ))
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("🧂 Salt successfully fetched");
-                let clear_salt = res.text().await.unwrap();
-                let salt = bs58::decode(clear_salt).into_vec();
+    else {
+        spin.stop("Error while fetching salt");
+        return None;
+    };
 
-                return Some(salt.unwrap());
-            }
-            _ => {
-                // any other ->
-                log::error("Error while fetching salt").unwrap();
+    let StatusCode::OK = res.status() else {
+        log::error("Error while fetching salt").unwrap();
+        return None;
+    };
+    spin.stop("🧂 Salt successfully fetched");
+    let clear_salt = res.text().await.unwrap();
+    let salt = bs58::decode(clear_salt).into_vec();
 
-                /* log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap(); */
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching salt");
-
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    Some(salt.unwrap())
 }
 
 pub async fn get_file(jwt: &str, file_id: &str, owner_id: &str) -> Option<Vec<u8>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching file content...");
-    match client
+
+    let Ok(res) = CLIENT
         .get(format!(
-            "{}/file/get_content?auth_token={}&file_id={}&owner_id={}",
+            "{}/file/get_content?file_id={}&owner_id={}",
             URL.to_string(),
-            jwt,
             file_id,
             owner_id
         ))
+        .bearer_auth(jwt)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("File content successfully fetched");
+    else {
+        spin.stop("Error while fetching file content");
+        return None;
+    };
 
-                let file_content = res.text().await.unwrap();
-                let content = bs58::decode(file_content).into_vec();
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while fetching file content");
 
-                return Some(content.unwrap());
+        // any other ->
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                spin.stop("Error while fetching file content");
+        ))
+        .unwrap();
+        return None;
+    };
+    spin.stop("File content successfully fetched");
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching file content");
+    let file_content = res.text().await.unwrap();
+    let content = bs58::decode(file_content).into_vec();
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    Some(content.unwrap())
 }
 
 pub async fn get_public_key_with_uid(
     auth_token: &str,
     username: &str,
 ) -> Option<PublicKeyMaterial> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching public key...");
-    match client
+
+    let Ok(res) = CLIENT
         .get(format!(
-            "{}/auth/get_public_key?auth_token={}&username={}",
+            "{}/auth/get_public_key&username={}",
             URL.to_string(),
-            auth_token,
             username,
         ))
+        .bearer_auth(auth_token)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Public key successfully fetched");
+    else {
+        spin.stop("Error while fetching public key");
 
-                // the public key is encoded in base64
-                let pk_material = res.text().await.unwrap();
+        return None;
+    };
 
-                let decoded: PublicKeyMaterial = serde_json::from_str(&pk_material).unwrap();
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while fetching public key");
+        return None;
+    };
 
-                return Some(decoded);
-            }
-            _ => {
-                spin.stop("Error while fetching public key");
+    let pk_material = res.text().await.unwrap();
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching public key");
+    let decoded: PublicKeyMaterial = serde_json::from_str(&pk_material).unwrap();
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    Some(decoded)
 }
 
 pub async fn share_entity(auth_token: &str, share: &Sharing) -> Option<String> {
-    let client = Client::new();
-
     let mut spin = spinner();
     spin.start("Sharing content...");
-    match client
-        .post(format!(
-            "{}/share?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+
+    let Ok(res) = CLIENT
+        .post(format!("{}/share", URL.to_string(),))
+        .bearer_auth(auth_token)
         .json(share)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Element successfully shared");
-                return Some(res.text().await.unwrap());
-            }
-            _ => {
-                spin.stop("Error while sharing element");
+    else {
+        spin.stop("Error while sharing element");
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while sharing element");
+        return None;
+    };
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    let StatusCode::OK = res.status() else {
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
+            }
+        ))
+        .unwrap();
+        return None;
+    };
+
+    spin.stop("Element successfully shared");
+
+    Some(res.text().await.unwrap())
 }
 
 pub async fn revoke_share(auth_token: &str, share: &Sharing) -> Option<String> {
-    let client = Client::new();
-
     let mut spin = spinner();
     spin.start("Revoking share");
-    match client
-        .post(format!(
-            "{}/revoke_share?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+
+    let Ok(res) = CLIENT
+        .post(format!("{}/revoke_share", URL.to_string()))
+        .bearer_auth(auth_token)
         .json(share)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Share succesfully revoked");
+    else {
+        spin.stop("Error while revoking share");
 
-                return Some(res.text().await.unwrap());
+        return None;
+    };
+
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while revoking share");
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                spin.stop("Error while revoking share");
+        ))
+        .unwrap();
+        return None;
+    };
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while revoking share");
+    spin.stop("Share succesfully revoked");
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    return Some(res.text().await.unwrap());
 }
 
 /// The path set must be encrypted
 pub async fn add_file(auth_token: &str, new_file: &FsEntity) -> Option<String> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Uploading new file...");
-    match client
-        .post(format!(
-            "{}/file/create?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+
+    let Ok(res) = CLIENT
+        .post(format!("{}/file/create", URL.to_string(),))
+        .bearer_auth(auth_token)
         .json(&new_file)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("File successfully uploaded");
+    else {
+        spin.stop("Error while uploading file");
+        return None;
+    };
 
-                return Some(res.text().await.unwrap());
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while uploading file");
+
+        // any other ->
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                spin.stop("Error while uploading file");
+        ))
+        .unwrap();
+        return None;
+    };
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while uploading file");
+    spin.stop("File successfully uploaded");
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    Some(res.text().await.unwrap())
 }
 
 pub async fn create_dir(auth_token: &str, dir: &FsEntity) -> Option<String> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Creating new directory...");
-    match client
-        .post(format!(
-            "{}/dir/create?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+
+    let Ok(res) = CLIENT
+        .post(format!("{}/dir/create", URL.to_string(),))
+        .bearer_auth(auth_token)
         .json(dir)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                spin.stop("Directory successfully created");
-                return Some(res.text().await.unwrap());
-            }
-            _ => {
-                spin.stop("Error while creating directory");
+    else {
+        spin.stop("Error while creating directory");
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while creating directory");
+        return None;
+    };
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while creating directory");
+
+        // any other ->
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
+            }
+        ))
+        .unwrap();
+        return None;
+    };
+
+    spin.stop("Directory successfully created");
+
+    Some(res.text().await.unwrap())
 }
 
 pub async fn get_children(auth_token: &str, parent_id: &str) -> Option<Vec<FsEntity>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching directory children...");
-    match client
+
+    let Ok(res) = CLIENT
         .get(format!(
-            "{}/dirs/get_children?auth_token={}&parent_id={}",
+            "{}/dirs/get_children?parent_id={}",
             URL.to_string(),
-            auth_token,
             parent_id
         ))
+        .bearer_auth(auth_token)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                let list_dirs_str: Vec<FsEntity> =
-                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
+    else {
+        spin.stop("Error while fetching directory children");
+        return None;
+    };
 
-                spin.stop(format!("{} children fetched", list_dirs_str.len()));
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while fetching directory children");
 
-                return Some(list_dirs_str);
+        // any other ->
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                spin.stop("Error while fetching directory children");
+        ))
+        .unwrap();
+        return None;
+    };
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching directory children");
+    let list_dirs_str: Vec<FsEntity> = serde_json::from_str(&res.text().await.unwrap()).unwrap();
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    spin.stop(format!("{} children fetched", list_dirs_str.len()));
+
+    Some(list_dirs_str)
 }
 
 pub async fn get_shared_children(
@@ -572,65 +454,56 @@ pub async fn get_shared_children(
     share: &Sharing,
     sub_id: &str,
 ) -> Option<Vec<FsEntity>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching directory children...");
-    match client
+
+    let Ok(res) = CLIENT
         .get(format!(
-            "{}/dirs/get_shared_children?auth_token={}&sub_entity_id={}",
+            "{}/dirs/get_shared_children?sub_entity_id={}",
             URL.to_string(),
-            auth_token,
             sub_id
         ))
+        .bearer_auth(auth_token)
         .json(share)
         .send()
         .await
-    {
-        Ok(res) => match res.status() {
-            StatusCode::OK => {
-                let list_dirs_str: Vec<FsEntity> =
-                    serde_json::from_str(&res.text().await.unwrap()).unwrap();
-                spin.stop(format!("{} children fetched", list_dirs_str.len()));
+    else {
+        spin.stop("Error while fetching directory children");
 
-                return Some(list_dirs_str);
+        return None;
+    };
+
+    let StatusCode::OK = res.status() else {
+        spin.stop("Error while fetching directory children");
+
+        // any other ->
+        log::error(format!(
+            "{}",
+            match res.text().await {
+                Ok(t) => t,
+                Err(e) => e.to_string(),
             }
-            _ => {
-                spin.stop("Error while fetching directory children");
+        ))
+        .unwrap();
+        return None;
+    };
 
-                // any other ->
-                log::error(format!(
-                    "{}",
-                    match res.text().await {
-                        Ok(t) => t,
-                        Err(e) => e.to_string(),
-                    }
-                ))
-                .unwrap();
-                None
-            }
-        },
-        Err(e) => {
-            spin.stop("Error while fetching directory children");
+    let list_dirs_str: Vec<FsEntity> = serde_json::from_str(&res.text().await.unwrap()).unwrap();
+    spin.stop(format!("{} children fetched", list_dirs_str.len()));
 
-            log::error(format!("{}", e.to_string())).unwrap();
-            None
-        }
-    }
+    Some(list_dirs_str)
 }
 
 pub async fn get_shared_entity(
     auth_token: &str,
     share: &Sharing,
 ) -> Result<FsEntity, Box<dyn Error>> {
-    let client = Client::new();
     let mut spin = spinner();
     spin.start("Fetching element...");
-    let Ok(res) = client
-        .get(format!(
-            "{}/get_shared_entity?auth_token={}",
-            URL.to_string(),
-            auth_token,
-        ))
+
+    let Ok(res) = CLIENT
+        .get(format!("{}/get_shared_entity", URL.to_string()))
+        .bearer_auth(auth_token)
         .json(share)
         .send()
         .await
@@ -638,16 +511,14 @@ pub async fn get_shared_entity(
         return Err("Cannot reach the server".into());
     };
 
-    let status = res.status();
+    let StatusCode::OK = res.status() else {
+        return Err("Unable to fetch request content".into());
+    };
 
     let Ok(content) = res.text().await else {
         return Err("Unable to fetch request content".into());
     };
 
-    if status != StatusCode::OK {
-        // any other ->
-        log::error(format!("{}", content)).unwrap();
-    }
     // only for ok
     spin.stop("Element successfully fetched");
 

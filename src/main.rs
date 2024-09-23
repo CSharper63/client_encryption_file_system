@@ -73,7 +73,6 @@ async fn navigate_over(my_user: &mut User, jwt: &str) -> Result<(), Box<dyn std:
         // if we want o modifiy the tree -> modify dirs_refs_to_process
         items.clear();
 
-        // Ajouter les éléments standards à la liste
         items.push(("create_dir", "🆕 Create a dir", ""));
         items.push(("add_file", "🆕 Add file", ""));
         items.push(("list_content", "📂 List content", ""));
