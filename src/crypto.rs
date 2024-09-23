@@ -5,16 +5,14 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
 };
 
-use hkdf::Hkdf;
-use sha2::Sha256;
-
 use chacha20poly1305::{
     aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,
 };
 use rsa::{
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
-    sha2, Oaep, RsaPrivateKey, RsaPublicKey,
+    sha2::{self, Sha256},
+    Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
 use crate::models::data_asset::DataAsset;
@@ -131,19 +129,10 @@ pub fn generate_master_key() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// Use to derive keys from input, in this case the input will be a password hash and the derivation will produce an auth key and a symmetric key.
-pub fn kdf(key_material: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
-    let mut auth_key = [0u8; SYMMETRIC_KEY_SIZE];
-    let mut symmetric_key = [0u8; SYMMETRIC_KEY_SIZE];
-
-    let Ok(kdf) = Hkdf::<Sha256>::from_prk(&key_material.as_slice()) else {
-        return Err("Unable to generate kdf from key".into());
-    };
-
-    kdf.expand(b"auth_key", &mut auth_key)
-        .expect("32 is a valid length for Sha256 to output");
-
-    kdf.expand(b"symm_key", &mut symmetric_key)
-        .expect("32 is a valid length for Sha256 to output");
+/// This function should be use only with strong key material (not password). Keys are derived using blake3 function.
+pub fn derive_auth_symm_keys(key_material: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), Box<dyn Error>> {
+    let auth_key = blake3::derive_key("auth_key", &key_material);
+    let symmetric_key = blake3::derive_key("symmetric_key", &key_material);
 
     Ok((auth_key.to_vec(), symmetric_key.to_vec()))
 }

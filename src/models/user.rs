@@ -63,7 +63,7 @@ impl User {
         let master_key = crypto::generate_master_key()?;
 
         // user kdf to derive auth and symm key
-        let (auth_key, symm_key) = crypto::kdf(hash)?;
+        let (auth_key, symm_key) = crypto::derive_auth_symm_keys(hash)?;
 
         // asymm crypto -> generate public and private keys
         let (private_key, public_key) = crypto::generate_asymm_keys()?;
@@ -155,7 +155,7 @@ impl User {
         let (hash, _) = crypto::hash_password(password, salt)?;
 
         // user kdf to derive auth and symm key
-        let (auth_key, symm_key) = crypto::kdf(hash)?;
+        let (auth_key, symm_key) = crypto::derive_auth_symm_keys(hash)?;
         spin.stop("Keys successfully rebuilt");
 
         Ok((auth_key, symm_key))
@@ -212,7 +212,8 @@ impl User {
         let (password_hash, _) = crypto::hash_password(password, salt.clone())?;
 
         // retrieve user symm key using kdf from the password hash
-        let (_, user_symm_key) = crypto::kdf(password_hash.try_into().unwrap_or_default())?;
+        let (_, user_symm_key) =
+            crypto::derive_auth_symm_keys(password_hash.try_into().unwrap_or_default())?;
 
         // decrypt the master key using user symm key
         let user_master_key = crypto::decrypt(
@@ -279,7 +280,7 @@ impl User {
         let (hash, salt) = crypto::hash_password(new_password, None)?;
 
         // user kdf to derive auth and symm key
-        let (auth_key, symm_key) = crypto::kdf(hash)?;
+        let (auth_key, symm_key) = crypto::derive_auth_symm_keys(hash)?;
 
         let master_key = DataAsset::decrypted(self.master_key.clone().asset, None);
 

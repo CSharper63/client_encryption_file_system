@@ -12,7 +12,7 @@ use crate::models::{
     user::User,
 };
 
-static URL: &str = "https://127.0.0.1:443";
+static URL: &str = "http://127.0.0.1:8080";
 
 pub async fn sign_up(username: &str, password: &str) -> Result<Option<String>, Box<dyn Error>> {
     let client = Client::new();
