@@ -11,7 +11,7 @@ use chacha20poly1305::{
 };
 use rsa::{
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
-    sha2::{self, Sha256},
+    sha2::Sha256,
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 
