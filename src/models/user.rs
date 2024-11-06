@@ -168,17 +168,10 @@ impl User {
         let mk = self.master_key.asset.clone();
 
         // encrypt the master and asymm private keys using symmetric key
-        let encrypted_master_key = crypto::encrypt(
-            symmetric_key.clone(),
-            mk.clone(),
-            self.master_key.nonce.clone(),
-        )?;
+        let encrypted_master_key = crypto::encrypt(symmetric_key.clone(), mk.clone(), None)?;
 
-        let encrypted_private_key = crypto::encrypt(
-            mk.unwrap(),
-            self.private_key.asset.clone(),
-            self.private_key.nonce.clone(),
-        )?;
+        let encrypted_private_key =
+            crypto::encrypt(mk.unwrap(), self.private_key.asset.clone(), None)?;
 
         spin.stop("Profile successfully encrypted");
 

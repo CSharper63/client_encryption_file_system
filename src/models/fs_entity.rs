@@ -95,14 +95,10 @@ impl FsEntity {
         let encrypted_name = crypto::encrypt(
             self.key.clone().asset.unwrap(),
             self.name.asset.clone(),
-            self.name.nonce.clone(),
+            None,
         )?;
 
-        let encrypted_key = crypto::encrypt(
-            parent_key.clone(),
-            self.key.clone().asset,
-            self.key.clone().nonce,
-        )?;
+        let encrypted_key = crypto::encrypt(parent_key.clone(), self.key.clone().asset, None)?;
 
         let mut encrypted_content: Option<DataAsset> = None;
 
@@ -111,7 +107,7 @@ impl FsEntity {
             encrypted_content = match crypto::encrypt(
                 self.key.asset.clone().unwrap(), // for a file the content
                 self.content.clone().unwrap().asset,
-                self.content.clone().unwrap().nonce,
+                None,
             ) {
                 Ok(ciphertext) => Some(ciphertext),
                 Err(_) => None,
